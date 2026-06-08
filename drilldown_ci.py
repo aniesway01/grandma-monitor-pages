@@ -71,19 +71,21 @@ def download_clip(host, port, user, password, camera, start_ts, end_ts, out_path
             cmd = base_cmd + ["-c", "copy", "-f", "mpegts", str(out_path)]
         else:
             cmd = base_cmd + ["-c:v", enc] + enc_args + ["-f", "mpegts", str(out_path)]
-        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         try:
-            proc.wait(timeout=timeout_s)
+            _, stderr_data = proc.communicate(timeout=timeout_s)
         except (subprocess.TimeoutExpired, KeyboardInterrupt, Exception):
             proc.kill()
-            proc.wait()
+            proc.communicate()
+            stderr_data = b""
         if out_path.exists() and out_path.stat().st_size > 10000:
             elapsed = time.time() - t0
             size_mb = out_path.stat().st_size / 1024 / 1024
             print(f"  OK ({size_mb:.1f}MB, {elapsed:.0f}s, enc={enc})")
             return True
         out_path.unlink(missing_ok=True)
-        print(f"  [{enc}] failed, trying next...")
+        err_tail = stderr_data.decode(errors="replace").strip()[-300:] if stderr_data else "no stderr"
+        print(f"  [{enc}] failed: {err_tail}")
 
     print(f"  FAIL (all encoders failed)")
     return False
