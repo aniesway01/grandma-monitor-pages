@@ -1,0 +1,112 @@
+name: Drill-Down
+
+on:
+  workflow_dispatch:
+    inputs:
+      camera:
+        description: Camera channel
+        required: true
+        default: CH06
+        type: choice
+        options:
+          - CH01
+          - CH02
+          - CH03
+          - CH04
+          - CH05
+          - CH06
+      date:
+        description: Date YYYY-MM-DD
+        required: true
+        default: '2026-06-01'
+      start_time:
+        description: Start time HH:MM
+        required: true
+        default: '12:45'
+      end_time:
+        description: End time HH:MM
+        required: true
+        default: '12:50'
+
+concurrency:
+  group: drilldown
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  drilldown:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
+
+      - name: Write Drive token
+        run: echo '${{ secrets.GDRIVE_TOKEN }}' > gdrive_token.json
+
+      - name: Run drill-down
+        env:
+          DVR_HOST: ${{ secrets.DVR_HOST }}
+          DVR_PORT: ${{ secrets.DVR_PORT }}
+          DVR_USER: ${{ secrets.DVR_USER }}
+          DVR_PASSWORD: ${{ secrets.DVR_PASSWORD }}
+          FFMPEG_ENCODER: copy
+        run: |
+          python drilldown_ci.py \
+            --camera "${{ inputs.camera }}" \
+            --date "${{ inputs.date }}" \
+            --start "${{ inputs.start_time }}" \
+            --end "${{ inputs.end_time }}" \
+            --token-path gdrive_token.json \
+            --output-dir output
+
+      - name: Deploy to Pages
+        run: |
+          cp output/drilldown_*.html . 2>/dev/null || true
+          python3 -c "
+          import json
+          from pathlib import Path
+          meta = Path('output/drilldown_result.json')
+          if not meta.exists():
+              exit(1)
+          m = json.loads(meta.read_text())
+          idx = Path('drilldown_index.json')
+          ls = json.loads(idx.read_text()) if idx.exists() else []
+          ls.append(m)
+          idx.write_text(json.dumps(ls, indent=2))
+          print(f'Index: {len(ls)} entries')
+          "
+
+      - name: Push results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && echo "No changes" && exit 0
+          git commit -m "drill-down: ${{ inputs.camera }} ${{ inputs.date }} ${{ inputs.start_time }}-${{ inputs.end_time }}"
+          git push
+
+      - name: Notify on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Drill-down failed: ${{ inputs.camera }} ${{ inputs.date }} ${{ inputs.start_time }}-${{ inputs.end_time }}`,
+              body: `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              labels: ['drill-down-failure']
+            });
