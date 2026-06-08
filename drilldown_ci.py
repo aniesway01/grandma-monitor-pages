@@ -59,8 +59,9 @@ def download_clip(host, port, user, password, camera, start_ts, end_ts, out_path
         "-analyzeduration", "5000000", "-probesize", "5000000",
         "-i", url,
     ]
-    encoder = os.environ.get("FFMPEG_ENCODER", "copy")
-    encoders = [(encoder, []), ("libx264", ["-preset", "fast"])]
+    encoder = os.environ.get("FFMPEG_ENCODER", "libx264")
+    encoders = [(encoder, ["-preset", "fast"] if encoder == "libx264" else []),
+                ("libx264", ["-preset", "fast"])]
 
     timeout_s = max(int(duration * 5), 300)
     print(f"  Downloading {camera} clip ({duration//60}m{duration%60}s)...")
