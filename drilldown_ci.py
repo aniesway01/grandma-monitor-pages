@@ -45,71 +45,96 @@ def wait_for_dvr(host, port, user, password, max_retries=5):
     return False
 
 
-def download_clip(host, port, user, password, camera, start_ts, end_ts, out_path):
-    """Download DVR clip with multiple strategies."""
-    from urllib.parse import quote
+def download_frames_direct(host, port, user, password, camera, start_ts, end_ts, out_dir, interval_s):
+    """Download frames directly from DVR multipart MJPEG stream.
+
+    iCatch DVR's net_video.cgi returns multipart/x-mixed-replace MIME with
+    JPEG frames. Parse boundaries in Python — no ffmpeg dependency for download.
+    """
     ch = int(camera[2:])
     iframe = 1 << (ch - 1)
     duration = end_ts - start_ts
-
-    # URL with embedded credentials (avoids -headers compatibility issues on Linux)
-    url_auth = (f"http://{quote(user, safe='')}:{quote(password, safe='')}@"
-                f"{host}:{port}/cgi-bin/net_video.cgi"
-                f"?hq=1&iframe={iframe}&pframe=65535&audio=0&beg={start_ts}&end={end_ts}")
-    # URL with -headers auth (fallback)
-    url_plain = (f"http://{host}:{port}/cgi-bin/net_video.cgi"
-                 f"?hq=1&iframe={iframe}&pframe=65535&audio=0&beg={start_ts}&end={end_ts}")
     auth_b64 = base64.b64encode(f"{user}:{password}".encode()).decode()
+    url = (f"http://{host}:{port}/cgi-bin/net_video.cgi"
+           f"?hq=1&iframe={iframe}&pframe=65535&audio=0&beg={start_ts}&end={end_ts}")
 
-    strategies = [
-        ("url-auth+libx264", [
-            "ffmpeg", "-y", "-analyzeduration", "10000000", "-probesize", "10000000",
-            "-i", url_auth,
-            "-c:v", "libx264", "-preset", "fast", "-f", "mpegts", str(out_path)]),
-        ("url-auth+copy+avi", [
-            "ffmpeg", "-y", "-analyzeduration", "10000000", "-probesize", "10000000",
-            "-i", url_auth,
-            "-c", "copy", "-f", "avi", str(out_path.with_suffix(".avi"))]),
-        ("headers+libx264", [
-            "ffmpeg", "-y",
-            "-headers", f"Authorization: Basic {auth_b64}\r\n",
-            "-analyzeduration", "10000000", "-probesize", "10000000",
-            "-i", url_plain,
-            "-c:v", "libx264", "-preset", "fast", "-f", "mpegts", str(out_path)]),
-    ]
-
+    out_dir.mkdir(parents=True, exist_ok=True)
     timeout_s = max(int(duration * 5), 300)
-    print(f"  Downloading {camera} clip ({duration//60}m{duration%60}s)...")
+    print(f"  Downloading {camera} frames ({duration//60}m{duration%60}s, interval={interval_s}s)...")
     t0 = time.time()
 
-    for name, cmd in strategies:
-        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        try:
-            _, stderr_data = proc.communicate(timeout=timeout_s)
-        except (subprocess.TimeoutExpired, KeyboardInterrupt, Exception):
-            proc.kill()
-            proc.communicate()
-            stderr_data = b""
-        # Check both .ts and .avi outputs
-        for candidate in [out_path, out_path.with_suffix(".avi")]:
-            if candidate.exists() and candidate.stat().st_size > 10000:
-                elapsed = time.time() - t0
-                size_mb = candidate.stat().st_size / 1024 / 1024
-                print(f"  OK ({size_mb:.1f}MB, {elapsed:.0f}s, strategy={name})")
-                # Normalize to out_path if different file
-                if candidate != out_path:
-                    if out_path.exists():
-                        out_path.unlink()
-                    candidate.rename(out_path)
-                return True
-        # Cleanup failed outputs
-        out_path.unlink(missing_ok=True)
-        out_path.with_suffix(".avi").unlink(missing_ok=True)
-        err_tail = stderr_data.decode(errors="replace").strip()[-300:] if stderr_data else "no stderr"
-        print(f"  [{name}] failed: {err_tail}")
+    req = urllib.request.Request(url, headers={"Authorization": f"Basic {auth_b64}"})
+    try:
+        resp = urllib.request.urlopen(req, timeout=timeout_s)
+    except Exception as e:
+        print(f"  [ERR] HTTP request failed: {e}")
+        return []
 
-    print(f"  FAIL (all encoders failed)")
-    return False
+    # Parse multipart boundary from Content-Type
+    ct = resp.headers.get("Content-Type", "")
+    boundary = None
+    if "boundary=" in ct:
+        boundary = ct.split("boundary=")[1].strip().encode()
+    if not boundary:
+        boundary = b"myboundary"
+    boundary_marker = b"--" + boundary
+
+    # Read stream and extract JPEG frames at interval
+    frames = []
+    frame_count = 0
+    last_saved_ts = 0
+    buf = b""
+    target_frames = duration // interval_s
+
+    try:
+        while True:
+            chunk = resp.read(65536)
+            if not chunk:
+                break
+            buf += chunk
+
+            # Extract complete JPEG frames from buffer
+            while boundary_marker in buf:
+                idx = buf.find(boundary_marker)
+                part = buf[:idx]
+                buf = buf[idx + len(boundary_marker):]
+
+                # Find JPEG data in this part (starts after \r\n\r\n header)
+                header_end = part.find(b"\r\n\r\n")
+                if header_end < 0:
+                    continue
+                jpeg_data = part[header_end + 4:]
+                if len(jpeg_data) < 1000:
+                    continue
+
+                frame_count += 1
+                # Save at interval (DVR sends ~25fps, we want 1 frame per interval_s)
+                frame_time = start_ts + (frame_count / 25.0)
+                if frame_time - last_saved_ts >= interval_s or last_saved_ts == 0:
+                    last_saved_ts = frame_time
+                    dt = datetime.fromtimestamp(frame_time, TW)
+                    fname = f"{dt.strftime('%H%M%S')}.jpg"
+                    fpath = out_dir / fname
+                    fpath.write_bytes(jpeg_data)
+                    frames.append(fpath)
+
+                    if len(frames) % 10 == 0:
+                        print(f"    {len(frames)} frames saved...")
+
+                    if len(frames) >= target_frames:
+                        break
+
+            if len(frames) >= target_frames:
+                break
+            if time.time() - t0 > timeout_s:
+                print(f"  [WARN] Timeout after {len(frames)} frames")
+                break
+    except Exception as e:
+        print(f"  [WARN] Stream ended: {e}")
+
+    elapsed = time.time() - t0
+    print(f"  Downloaded {len(frames)} frames in {elapsed:.0f}s (from {frame_count} total)")
+    return frames
 
 
 def extract_frames(clip_path, out_dir, interval_s, start_ts):
@@ -290,7 +315,6 @@ def main():
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    clip_path = out_dir / "clip.ts"
     frames_dir = out_dir / "frames"
 
     print("=" * 60)
@@ -298,28 +322,21 @@ def main():
     print("=" * 60)
 
     # Step 1: DVR health check + wait
-    print("\n[1/4] DVR health check...")
+    print("\n[1/3] DVR health check...")
     if not wait_for_dvr(args.dvr_host, args.dvr_port, args.dvr_user, args.dvr_password):
         print("[FAIL] DVR unavailable after retries")
         sys.exit(1)
 
-    # Step 2: Download clip
-    print("\n[2/4] Downloading clip...")
-    ok = download_clip(args.dvr_host, args.dvr_port, args.dvr_user, args.dvr_password,
-                       camera, start_ts, end_ts, clip_path)
-    if not ok:
-        print("[FAIL] Clip download failed")
-        sys.exit(1)
-
-    # Step 3: Extract frames
-    print("\n[3/4] Extracting frames...")
-    frames = extract_frames(clip_path, frames_dir, args.interval, start_ts)
+    # Step 2: Download frames directly (no ffmpeg needed — parse multipart MJPEG)
+    print("\n[2/3] Downloading frames from DVR...")
+    frames = download_frames_direct(args.dvr_host, args.dvr_port, args.dvr_user, args.dvr_password,
+                                    camera, start_ts, end_ts, frames_dir, args.interval)
     if not frames:
-        print("[FAIL] No frames extracted")
+        print("[FAIL] No frames downloaded")
         sys.exit(1)
 
-    # Step 4: Upload to Drive
-    print("\n[4/4] Uploading to Drive...")
+    # Step 3: Upload to Drive
+    print("\n[3/3] Uploading to Drive...")
     token_path = Path(args.token_path)
     if not token_path.exists():
         print(f"[FAIL] Token file not found: {token_path}")
