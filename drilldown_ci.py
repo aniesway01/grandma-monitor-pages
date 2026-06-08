@@ -46,32 +46,43 @@ def wait_for_dvr(host, port, user, password, max_retries=5):
 
 
 def download_clip(host, port, user, password, camera, start_ts, end_ts, out_path):
-    """Download DVR clip with encoder fallback."""
+    """Download DVR clip with multiple strategies."""
+    from urllib.parse import quote
     ch = int(camera[2:])
     iframe = 1 << (ch - 1)
     duration = end_ts - start_ts
+
+    # URL with embedded credentials (avoids -headers compatibility issues on Linux)
+    url_auth = (f"http://{quote(user, safe='')}:{quote(password, safe='')}@"
+                f"{host}:{port}/cgi-bin/net_video.cgi"
+                f"?hq=1&iframe={iframe}&pframe=65535&audio=0&beg={start_ts}&end={end_ts}")
+    # URL with -headers auth (fallback)
+    url_plain = (f"http://{host}:{port}/cgi-bin/net_video.cgi"
+                 f"?hq=1&iframe={iframe}&pframe=65535&audio=0&beg={start_ts}&end={end_ts}")
     auth_b64 = base64.b64encode(f"{user}:{password}".encode()).decode()
-    url = (f"http://{host}:{port}/cgi-bin/net_video.cgi"
-           f"?hq=1&iframe={iframe}&pframe=65535&audio=0&beg={start_ts}&end={end_ts}")
-    base_cmd = [
-        "ffmpeg", "-y",
-        "-headers", f"Authorization: Basic {auth_b64}\r\n",
-        "-analyzeduration", "5000000", "-probesize", "5000000",
-        "-i", url,
+
+    strategies = [
+        ("url-auth+libx264", [
+            "ffmpeg", "-y", "-analyzeduration", "10000000", "-probesize", "10000000",
+            "-i", url_auth,
+            "-c:v", "libx264", "-preset", "fast", "-f", "mpegts", str(out_path)]),
+        ("url-auth+copy+avi", [
+            "ffmpeg", "-y", "-analyzeduration", "10000000", "-probesize", "10000000",
+            "-i", url_auth,
+            "-c", "copy", "-f", "avi", str(out_path.with_suffix(".avi"))]),
+        ("headers+libx264", [
+            "ffmpeg", "-y",
+            "-headers", f"Authorization: Basic {auth_b64}\r\n",
+            "-analyzeduration", "10000000", "-probesize", "10000000",
+            "-i", url_plain,
+            "-c:v", "libx264", "-preset", "fast", "-f", "mpegts", str(out_path)]),
     ]
-    encoder = os.environ.get("FFMPEG_ENCODER", "libx264")
-    encoders = [(encoder, ["-preset", "fast"] if encoder == "libx264" else []),
-                ("libx264", ["-preset", "fast"])]
 
     timeout_s = max(int(duration * 5), 300)
     print(f"  Downloading {camera} clip ({duration//60}m{duration%60}s)...")
     t0 = time.time()
 
-    for enc, enc_args in encoders:
-        if enc == "copy":
-            cmd = base_cmd + ["-c", "copy", "-f", "mpegts", str(out_path)]
-        else:
-            cmd = base_cmd + ["-c:v", enc] + enc_args + ["-f", "mpegts", str(out_path)]
+    for name, cmd in strategies:
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         try:
             _, stderr_data = proc.communicate(timeout=timeout_s)
@@ -79,14 +90,23 @@ def download_clip(host, port, user, password, camera, start_ts, end_ts, out_path
             proc.kill()
             proc.communicate()
             stderr_data = b""
-        if out_path.exists() and out_path.stat().st_size > 10000:
-            elapsed = time.time() - t0
-            size_mb = out_path.stat().st_size / 1024 / 1024
-            print(f"  OK ({size_mb:.1f}MB, {elapsed:.0f}s, enc={enc})")
-            return True
+        # Check both .ts and .avi outputs
+        for candidate in [out_path, out_path.with_suffix(".avi")]:
+            if candidate.exists() and candidate.stat().st_size > 10000:
+                elapsed = time.time() - t0
+                size_mb = candidate.stat().st_size / 1024 / 1024
+                print(f"  OK ({size_mb:.1f}MB, {elapsed:.0f}s, strategy={name})")
+                # Normalize to out_path if different file
+                if candidate != out_path:
+                    if out_path.exists():
+                        out_path.unlink()
+                    candidate.rename(out_path)
+                return True
+        # Cleanup failed outputs
         out_path.unlink(missing_ok=True)
+        out_path.with_suffix(".avi").unlink(missing_ok=True)
         err_tail = stderr_data.decode(errors="replace").strip()[-300:] if stderr_data else "no stderr"
-        print(f"  [{enc}] failed: {err_tail}")
+        print(f"  [{name}] failed: {err_tail}")
 
     print(f"  FAIL (all encoders failed)")
     return False
