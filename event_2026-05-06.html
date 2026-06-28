@@ -25,7 +25,12 @@
   .cell{width:140px;background:#1e293b;border:3px solid #6b7280;border-radius:6px;overflow:hidden;
     cursor:pointer;transition:transform .12s;position:relative}
   .cell:hover{transform:scale(1.06);z-index:5}
+  /* thumbnails start blank (data-src, no src) with a placeholder bg so cells keep size = no layout shift.
+     The JS loader fills them viewport-first, capped concurrency. .pending pulses until loaded/failed. */
   .thumb-img{display:block;width:100%;height:105px;object-fit:cover;background:#0b1220}
+  .thumb-img.pending{animation:thpulse 1.4s ease-in-out infinite}
+  .thumb-img.failed{background:#3a1212}
+  @keyframes thpulse{0%,100%{background:#0b1220}50%{background:#172033}}
   .thumb-missing{display:flex;align-items:center;justify-content:center;width:100%;height:105px;
     background:#0b1220;color:#475569;font-size:.7rem}
   figcaption{font-size:.62rem;color:#cbd5e1;padding:4px 5px;line-height:1.3;display:flex;align-items:center;gap:4px}
@@ -455,5 +460,88 @@
      and localStorage all live in the shared label_widget.js loaded below. -->
 <script src="label_widget.js"></script>
 <script>gmmCount();</script>
+
+<!-- Concurrency-capped, viewport-prioritized progressive thumbnail loader.
+     Problem it fixes: 465 thumbnails hitting img.proxyforanding.xyz at once saturate a constrained/
+     proxied connection -> most hang 'pending' forever (native loading="lazy" does NOT cap concurrency).
+     Design (same proven pattern as the per-minute timeline, generate_timeline lines 399-424):
+       - thumbnails carry data-src (no src) so nothing loads on page load;
+       - IntersectionObserver (rootMargin 600px) enqueues thumbnails as they near the viewport;
+       - at most LOADER_MAXC (5) load concurrently; a finished/errored one releases its slot;
+       - errors retry up to 2x with backoff; final failure shows the 'no image' placeholder.
+     Only the IMAGE-LOADING changes -- labeling hooks (openFull/data-*/widget) are untouched. -->
+<script>
+(function() {
+  var LOADER_MAXC = 5;   // max simultaneous requests to the relay (from concurrency research)
+  var MAX_RETRY = 2;
+  var active = 0;
+  var queue = [];          // thumbnails waiting for a slot
+  var queued = new WeakSet();
+
+  function enqueue(img) {
+    if (queued.has(img) || !img.dataset.src) return;
+    queued.add(img);
+    queue.push(img);
+    pump();
+  }
+  function pump() {
+    while (active < LOADER_MAXC && queue.length) {
+      startLoad(queue.shift());
+    }
+  }
+  function release() { active--; pump(); }
+  function startLoad(img) {
+    var src = img.dataset.src;
+    if (!src) return;
+    active++;                       // hold ONE slot for this img across all its retries
+    img.classList.add('pending');
+    var attempts = 0;
+    function done() {               // success: clear, free slot
+      img.onload = img.onerror = null;
+      img.classList.remove('pending', 'failed');
+      delete img.dataset.src;       // never reload
+      release();
+    }
+    function fail() {               // error: retry up to MAX_RETRY with backoff, else placeholder
+      img.onload = img.onerror = null;
+      if (attempts <= MAX_RETRY) {
+        setTimeout(go, 400 * attempts);   // backoff grows per attempt; slot stays held
+      } else {
+        img.classList.remove('pending');
+        img.classList.add('failed');
+        img.alt = 'no image';
+        delete img.dataset.src;
+        release();
+      }
+    }
+    function go() {
+      attempts++;
+      img.onload = done;
+      img.onerror = fail;
+      // cache-bust on retries so a transiently-rate-limited relay re-fetches
+      img.src = attempts === 1 ? src
+              : src + (src.indexOf('?') < 0 ? '?' : '&') + 'r=' + Date.now();
+    }
+    go();
+  }
+
+  var imgs = [].slice.call(document.querySelectorAll('img.thumb-img[data-src]'));
+  // viewport-first: IntersectionObserver enqueues thumbnails as they approach the viewport
+  if ('IntersectionObserver' in window) {
+    var io = new IntersectionObserver(function(entries) {
+      entries.forEach(function(e) {
+        if (e.isIntersecting) { enqueue(e.target); io.unobserve(e.target); }
+      });
+    }, {rootMargin: '600px'});
+    imgs.forEach(function(img) { io.observe(img); });
+    // background fill: after a short delay, enqueue everything still unloaded (top-to-bottom),
+    // so even thumbnails the user never scrolls near eventually load -- but always capped at MAXC.
+    setTimeout(function() { imgs.forEach(function(img) { if (img.dataset.src) enqueue(img); }); }, 1500);
+  } else {
+    // no IntersectionObserver: just queue them all (still capped)
+    imgs.forEach(function(img) { enqueue(img); });
+  }
+})();
+</script>
 </body>
 </html>
