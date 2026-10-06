@@ -1,0 +1,1241 @@
+<!DOCTYPE html><html><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Timeline 2026-10-06</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#1a1a2e;color:#e0e0e0}
+.header{padding:10px 16px;background:#16213e;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:100}
+.header h1{font-size:1.1em;flex:1}
+.header a,.header input,.header button{color:#e0e0e0;text-decoration:none;padding:4px 10px;background:#0f3460;border-radius:4px;border:1px solid #555;font-size:0.9em;cursor:pointer}
+.header a:hover,.header button:hover{background:#e94560}
+.cam-header{display:grid;grid-template-columns:54px repeat(6,1fr);position:sticky;top:44px;z-index:99;background:#16213e;border-bottom:2px solid #555}
+.cam-header div{text-align:center;padding:6px 0;font-weight:bold;font-size:0.85em}
+.grid-row{display:grid;grid-template-columns:54px repeat(6,1fr);border-bottom:1px solid #222;min-height:4px}
+.grid-row.has-det{min-height:118px}
+.grid-row.empty{min-height:2px;opacity:0.3}
+.time-label{font-size:0.7em;color:#888;display:flex;align-items:center;justify-content:center;position:sticky;left:0;background:#1a1a2e;z-index:10}
+.time-label.hour{color:#e94560;font-weight:bold;font-size:0.8em}
+.cell{display:flex;align-items:center;justify-content:center;padding:1px;min-height:inherit}
+.cell img{height:112px;border-radius:2px;cursor:pointer;border:2px solid transparent;transition:transform 0.2s ease;position:relative;z-index:1}
+.cell img.person{border-color:#e74c3c}
+.cell img.vehicle{border-color:#3498db}
+.cell img.both{border-color:#f39c12}
+.cell img.review{border-color:#ff9800;border-style:dashed}
+.lbbox{position:absolute;border:2px dashed rgba(255,255,0,0.45);cursor:pointer;box-sizing:border-box}
+.lbbox:hover{border-color:#ff0;border-style:solid;background:rgba(255,255,0,0.12)}
+.cell img:hover{transform:scale(2.5);z-index:50;border-color:#e94560;box-shadow:0 0 16px rgba(233,69,96,0.8);border-radius:4px}
+.cell .dot{width:8px;height:8px;border-radius:50%;opacity:0.7}
+.cell .dot.person{background:#e74c3c}
+.cell .dot.vehicle{background:#3498db}
+.cell .dot.review{background:#ff9800}
+.hour-sep{border-top:1px solid #444;margin-top:2px}
+.grid-row.drilldown{background:#1e1e3a;border-left:3px solid #e94560}
+.time-label.dd{color:#e94560;font-size:0.65em}
+.cell img.drilldown{border-color:#e94560;opacity:0.95}
+.footer{padding:8px 16px;color:#666;font-size:0.8em}
+.fphide{display:none}
+body.show-fp .fphide{display:inline-block}
+.grid-row.fp-row{display:none}
+body.show-fp .grid-row.fp-row{display:grid}
+.cell img.fp{border-color:#555;opacity:.55}
+</style>
+<script>
+// --- FP labelling: PER-BOX verdict (correct / false-positive / duplicate) ---
+var GMM_SINK='https://labels.proxyforanding.xyz';  // click -> auto-saved to GitHub; '' to disable
+// --- Taiwan worker health badge (fed by the external Shenzhen/RackNerd sentinels via /health) ---
+(function(){
+  function render(d){
+    var hosts=Object.keys(d||{}).filter(function(h){return h.indexOf('_')!==0;});
+    if(!hosts.length)return;
+    var rank={RED:3,YELLOW:2,GREEN:1};
+    var worst=hosts.map(function(h){return d[h];}).sort(function(a,b){return (rank[b.status]||0)-(rank[a.status]||0);})[0];
+    var c=worst.status==='GREEN'?'#2ecc71':worst.status==='YELLOW'?'#ff9800':'#e74c3c';
+    var b=document.getElementById('gmmHealth')||document.createElement('div');
+    b.id='gmmHealth';
+    b.style.cssText='position:fixed;top:6px;right:8px;z-index:9999;background:'+c+';color:#fff;padding:4px 9px;border-radius:11px;font:12px sans-serif;box-shadow:0 1px 4px rgba(0,0,0,.3);cursor:help';
+    b.title=hosts.map(function(h){return h+': '+d[h].status+' '+(d[h].detail||'')+' @'+(d[h].ts||'');}).join('  |  ');
+    b.textContent='台灣 worker: '+worst.status+(worst.detail?(' · '+worst.detail):'');
+    if(!b.parentNode)document.body.appendChild(b);
+  }
+  function poll(){if(!GMM_SINK)return;fetch(GMM_SINK+'/health').then(function(r){return r.json();}).then(render).catch(function(){});}
+  if(document.readyState!=='loading')poll();else document.addEventListener('DOMContentLoaded',poll);
+  setInterval(poll,120000);
+})();
+// --- backfill raw-frame progress badge (fed by Taiwan via /progress; separate from worker health) ---
+(function(){
+  function fmt(p){return (p==null?'?':p)+'%';}
+  function render(d){
+    if(!d||!d.totals)return;
+    var pc=d.pct||{};
+    var age=99999;
+    if(d.computed_at){var t=Date.parse(d.computed_at);if(!isNaN(t))age=(Date.now()-t)/3600000;}
+    var stale=age>12?(' [STALE '+Math.round(age)+'h]'):(age>2?(' [stale '+Math.round(age)+'h]'):'');
+    var col=age>12?'#888':'#3498db';
+    var nx=d.next_expiry?(' · '+String(d.next_expiry.date).slice(5)+'剩'+d.next_expiry.days_left+'天'):'';
+    var b=document.getElementById('gmmProgress')||document.createElement('div');
+    b.id='gmmProgress';
+    b.style.cssText='position:fixed;top:34px;right:8px;z-index:9999;background:'+col+';color:#fff;padding:4px 9px;border-radius:11px;font:12px sans-serif;box-shadow:0 1px 4px rgba(0,0,0,.3);cursor:help';
+    b.textContent='補洞raw: 救回'+fmt(pc.recovered)+' 待'+fmt(pc.pending)+' 失'+fmt(pc.lost)+nx+stale;
+    var rs=(d.dates||[]).map(function(x){return x.date+': '+x.raw+'/'+x.T+' '+x.status+(x.days_left!=null?(' ('+x.days_left+'d)'):'');});
+    b.title='天花板(還能救)='+fmt(d.ceiling_remaining)+'  T='+d.totals.T+'  computed '+(d.computed_at||'?')+'  |  '+rs.join('  |  ');
+    if(!b.parentNode)document.body.appendChild(b);
+  }
+  function poll(){if(!GMM_SINK)return;fetch(GMM_SINK+'/progress').then(function(r){return r.json();}).then(render).catch(function(){});}
+  if(document.readyState!=='loading')poll();else document.addEventListener('DOMContentLoaded',poll);
+  setInterval(poll,120000);
+})();
+// FP fold toggle: confirmed/marked false-positives are hidden by default; one click reveals them
+(function(){
+  function setup(){
+    var hid=document.querySelectorAll('img.fphide').length;
+    if(!hid)return;
+    var btn=document.createElement('div');
+    btn.id='fpToggle';
+    btn.style.cssText='position:fixed;bottom:14px;left:14px;z-index:9999;background:#444;color:#fff;padding:6px 11px;border-radius:13px;font:12px sans-serif;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.3);user-select:none';
+    function lab(){btn.textContent=(document.body.classList.contains('show-fp')?'隱藏誤報':'顯示已標記誤報')+' ('+hid+')';}
+    btn.onclick=function(){document.body.classList.toggle('show-fp');lab();};
+    lab();document.body.appendChild(btn);
+  }
+  if(document.readyState!=='loading')setup();else document.addEventListener('DOMContentLoaded',setup);
+})();
+var GMM_LABELS=JSON.parse(localStorage.getItem('gmm_labels')||'[]');
+window._curImg=null;window._selBox=null;
+function vName(v){return v==='fp'?'誤報':v==='dup'?'重複(多框)':'正確';}
+function vColor(v){return v==='fp'?'#e74c3c':v==='dup'?'#ff9800':'#2ecc71';}
+function gmmCount(){var e=document.getElementById('lblcount');if(e)e.textContent=GMM_LABELS.length;}
+function _exist(i){var m=GMM_LABELS.filter(function(x){return window._curImg&&x.id===window._curImg.id&&x.box===i;});return m.length?m[0].verdict:null;}
+function openFull(el){
+  var idl=el.getAttribute('data-id')||'';
+  var dets=el.getAttribute('data-dets')||'';
+  var boxes=[];try{boxes=JSON.parse(el.getAttribute('data-boxes')||'[]');}catch(e){}
+  var info=idl+(dets?('  ['+dets+']'):'');
+  window._curImg={id:idl,dets:dets,boxes:boxes};window._selBox=null;
+  var full=el.getAttribute('data-full');
+  if(!full){window.open(el.src,'_blank');return;}
+  var im=document.getElementById('lightbox-img');
+  var note=document.getElementById('lightbox-note');
+  im.src=el.src;
+  note.textContent=info+'  · 點圖上的框 -> 選 正確/誤報/重複';
+  document.getElementById('lightbox').style.display='flex';
+  im.onload=function(){renderBoxes();};
+  renderBoxes();
+  var hi=new Image();
+  hi.onload=function(){im.src=full;renderBoxes();};
+  hi.src=full;
+}
+function renderBoxes(){
+  var wrap=document.getElementById('lb-wrap');if(!wrap||!window._curImg)return;
+  [].slice.call(wrap.querySelectorAll('.lbbox')).forEach(function(e){e.remove();});
+  (window._curImg.boxes||[]).forEach(function(bx,i){
+    var b=bx.b,d=document.createElement('div');d.className='lbbox';
+    d.style.left=(b[0]*100)+'%';d.style.top=(b[1]*100)+'%';
+    d.style.width=((b[2]-b[0])*100)+'%';d.style.height=((b[3]-b[1])*100)+'%';
+    var ex=_exist(i);
+    if(ex){d.style.borderColor=vColor(ex);d.style.borderStyle='solid';}
+    if(i===window._selBox){d.style.boxShadow='0 0 0 3px #fff';}
+    d.title=bx.c+' '+bx.p+'%'+(ex?(' = '+vName(ex)):'');
+    d.onclick=function(ev){ev.stopPropagation();selectBox(i);};
+    wrap.appendChild(d);
+  });
+}
+function selectBox(i){
+  window._selBox=i;renderBoxes();
+  var b=window._curImg.boxes[i];
+  document.getElementById('lightbox-note').textContent=
+    window._curImg.id+'  -> 已選 框#'+(i+1)+' '+b.c+' '+b.p+'%（請按下方 正確/誤報/重複）';
+}
+function verdict(v){
+  if(window._selBox===null){alert('先點圖上要標的那個框');return;}
+  var i=window._selBox,b=window._curImg.boxes[i];
+  GMM_LABELS=GMM_LABELS.filter(function(x){return !(x.id===window._curImg.id&&x.box===i);});
+  var _lbl={id:window._curImg.id,box:i,cls:b.c,conf:b.p,bbox:b.b,verdict:v,ts:Date.now()};
+  GMM_LABELS.push(_lbl);
+  localStorage.setItem('gmm_labels',JSON.stringify(GMM_LABELS));
+  if(GMM_SINK){fetch(GMM_SINK+'/label',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(_lbl)}).catch(function(){});} // auto-save; localStorage is the fallback
+  gmmCount();renderBoxes();
+  document.getElementById('lightbox-note').textContent=
+    window._curImg.id+'  框#'+(i+1)+' '+b.c+' -> '+vName(v)+' ✓（可繼續點別的框）';
+}
+function copyId(){
+  if(!window._curImg)return;var t=window._curImg.id;
+  var done=function(){document.getElementById('lightbox-note').textContent='已複製編號: '+t;};
+  if(navigator.clipboard){navigator.clipboard.writeText(t).then(done,function(){prompt('複製這個編號：',t);});}
+  else{prompt('複製這個編號：',t);}
+}
+function closeLightbox(){document.getElementById('lightbox').style.display='none';
+  document.getElementById('lightbox-img').src='';window._selBox=null;}
+function retryImg(el){
+  var n=parseInt(el.dataset.retries||'0');
+  if(n>=3)return;
+  el.dataset.retries=n+1;
+  setTimeout(function(){el.src=el.src.split('?')[0]+'?r='+Date.now();},1500*(n+1));
+}
+function exportLabels(){
+  if(!GMM_LABELS.length){alert('還沒有任何標記');return;}
+  var blob=new Blob([JSON.stringify(GMM_LABELS,null,1)],{type:'application/json'});
+  var a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download='labels_'+(location.pathname.split('/').pop()||'timeline')+'.json';
+  document.body.appendChild(a);a.click();a.remove();
+}
+function clearLabels(){if(confirm('清除本機所有標記（'+GMM_LABELS.length+'）？')){GMM_LABELS=[];localStorage.setItem('gmm_labels','[]');gmmCount();}}
+// Controlled loading: visible cells immediately, background queue daytime-first.
+// Concurrency capped at 3 so flaky proxy paths are never flooded.
+document.addEventListener('DOMContentLoaded',function(){
+  // zero-action recovery: push any localStorage labels not yet in the sink (e.g. ones made
+  // before the sink existed) so the user never has to export
+  if(GMM_SINK&&GMM_LABELS.length){
+    fetch(GMM_SINK+'/labels').then(function(r){return r.json();}).then(function(rem){
+      var seen={};(Array.isArray(rem)?rem:[]).forEach(function(x){seen[x.id+'|'+x.box]=1;});
+      var pend=GMM_LABELS.filter(function(x){return !seen[x.id+'|'+x.box];});
+      (function up(k){if(k>=pend.length)return;
+        fetch(GMM_SINK+'/label',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify(pend[k])}).then(function(){up(k+1);}).catch(function(){});})(0);
+    }).catch(function(){});
+  }
+  var imgs=[].slice.call(document.querySelectorAll('img[data-src]'));
+  var active=0,MAXC=3;
+  function load(el){
+    if(!el||el.src||!el.dataset.src)return;
+    if(active>=MAXC){setTimeout(function(){load(el);},200);return;}
+    active++;
+    el.onload=el.onerror=function(){active--;el.onload=null;
+      if(el.dataset.failed!=='1'&&!el.naturalWidth)retryImg(el);};
+    el.src=el.dataset.src;
+    delete el.dataset.src;
+  }
+  var io=new IntersectionObserver(function(entries){
+    entries.forEach(function(e){if(e.isIntersecting)load(e.target);});
+  },{rootMargin:'400px'});
+  imgs.forEach(function(el){io.observe(el);});
+  // Background queue: hour distance from noon, ascending (12:00 first, 00:00 last)
+  var queue=imgs.slice().sort(function(a,b){
+    return Math.abs((+a.dataset.hour)-12)-Math.abs((+b.dataset.hour)-12);});
+  var qi=0;
+  function pump(){
+    while(qi<queue.length&&queue[qi].dataset.src===undefined)qi++;
+    if(qi>=queue.length)return;
+    if(active<MAXC)load(queue[qi]);
+    setTimeout(pump,150);
+  }
+  setTimeout(pump,1200); // let visible cells claim bandwidth first
+});
+function jumpHour(h){
+  var el=document.getElementById('hour-'+h);
+  if(el){
+    var top=el.offsetTop-90;
+    window.scrollTo(0,Math.max(0,top));
+  }
+}
+</script>
+</head><body>
+<div class="header">
+<h1>2026-10-06</h1>
+<button onclick="jumpHour(0)">00</button>
+<button onclick="jumpHour(1)">01</button>
+<button onclick="jumpHour(2)">02</button>
+<button onclick="jumpHour(3)">03</button>
+<button onclick="jumpHour(4)">04</button>
+<button onclick="jumpHour(5)">05</button>
+<button onclick="jumpHour(6)">06</button>
+<button onclick="jumpHour(7)">07</button>
+<button onclick="jumpHour(8)">08</button>
+<button onclick="jumpHour(9)">09</button>
+<button onclick="jumpHour(10)">10</button>
+<button onclick="jumpHour(11)">11</button>
+<button onclick="jumpHour(12)">12</button>
+<button onclick="jumpHour(13)">13</button>
+<button onclick="jumpHour(14)">14</button>
+<button onclick="jumpHour(15)">15</button>
+<button onclick="jumpHour(16)">16</button>
+<button onclick="jumpHour(17)">17</button>
+<button onclick="jumpHour(18)">18</button>
+<button onclick="jumpHour(19)">19</button>
+<button onclick="jumpHour(20)">20</button>
+<button onclick="jumpHour(21)">21</button>
+<button onclick="jumpHour(22)">22</button>
+<button onclick="jumpHour(23)">23</button>
+<span id="dpwrap" style="position:relative;display:inline-block;vertical-align:middle">
+<button id="dpbtn" onclick="dpToggle()" style="background:#1a1a2e;color:#e0e0e0;border:1px solid #555;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:0.9em">2026-10-06 &#128197;</button>
+<div id="dppop" style="display:none;position:absolute;right:0;top:115%;z-index:9999;background:#16213e;border:1px solid #444;padding:10px;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.5);width:236px">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+<button onclick="dpMonth(-1)" style="background:none;border:none;color:#90caf9;font-size:18px;cursor:pointer">&#8249;</button>
+<span id="dpmon" style="font-weight:600;color:#e0e0e0"></span>
+<button onclick="dpMonth(1)" style="background:none;border:none;color:#90caf9;font-size:18px;cursor:pointer">&#8250;</button></div>
+<div id="dpgrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px"></div>
+<div style="font-size:11px;color:#888;margin-top:8px"><span style="color:#a5d6a7">&#9632;</span> 有資料 &nbsp; <span style="color:#ffb74d">&#9632;</span> 可重抽 &nbsp; <span style="color:#555">&#9632;</span> 已過期</div>
+</div></span>
+<script>
+var DP_CUR="2026-10-06",DP_DONE=null,DP_V=new Date("2026-10-06T00:00:00");
+function dp2(n){return(n<10?"0":"")+n;}
+function dpToggle(){var p=document.getElementById("dppop");var o=p.style.display=="none";p.style.display=o?"block":"none";if(o){DP_DONE===null?dpLoad():dpRender();}}
+function dpLoad(){fetch("dates.json?_="+Date.now()).then(function(r){return r.json();}).then(function(s){DP_DONE=new Set(s.dates||[]);dpRender();}).catch(function(){DP_DONE=new Set([DP_CUR]);dpRender();});}
+function dpMonth(d){DP_V.setMonth(DP_V.getMonth()+d);dpRender();}
+function dpRender(){var y=DP_V.getFullYear(),m=DP_V.getMonth();document.getElementById("dpmon").textContent=y+"-"+dp2(m+1);
+var first=new Date(y,m,1).getDay(),days=new Date(y,m+1,0).getDate(),h="";
+["日","一","二","三","四","五","六"].forEach(function(w){h+='<div style="color:#888;font-size:10px;text-align:center;padding:2px">'+w+'</div>';});
+for(var i=0;i<first;i++){h+="<div></div>";}
+var TD=new Date();TD.setHours(0,0,0,0);var RT=new Date(TD);RT.setDate(TD.getDate()-35);
+for(var d=1;d<=days;d++){var ds=y+"-"+dp2(m+1)+"-"+dp2(d),on=DP_DONE&&DP_DONE.has(ds);
+var dd=new Date(y,m,d),ir=(dd>=RT&&dd<=TD);
+var cs=on?"background:#1b5e20;color:#a5d6a7;cursor:pointer":(ir?"color:#ffb74d;cursor:default":"color:#555;cursor:default");
+var tt=on?"有資料,可看":(ir?"保留窗內,可重抽影片":"已過期,僅剩抽帧");
+h+='<div class="dpc'+(on?" dpon":"")+'" data-d="'+ds+'" title="'+tt+'" style="text-align:center;padding:5px 2px;border-radius:3px;font-size:12px;'+cs+(ds==DP_CUR?";outline:1px solid #90caf9":"")+'">'+d+'</div>';}
+document.getElementById("dpgrid").innerHTML=h;}
+document.addEventListener("click",function(e){var c=e.target.closest&&e.target.closest(".dpon");if(c){location.href="timeline_"+c.getAttribute("data-d")+".html";}});
+</script>
+</div>
+<div style="padding:8px 16px;background:#0f3460;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:0.85em">
+<span style="color:#e94560">Drill-Down:</span>
+<select id="dd-cam" style="background:#1a1a2e;color:#e0e0e0;border:1px solid #555;padding:3px;border-radius:3px">
+<option>CH01</option><option>CH02</option><option>CH03</option><option>CH04</option><option>CH05</option><option>CH06</option>
+</select>
+<input id="dd-start" type="text" placeholder="12:45" style="width:50px;background:#1a1a2e;color:#e0e0e0;border:1px solid #555;padding:3px;border-radius:3px;text-align:center">
+<span>~</span>
+<input id="dd-end" type="text" placeholder="12:50" style="width:50px;background:#1a1a2e;color:#e0e0e0;border:1px solid #555;padding:3px;border-radius:3px;text-align:center">
+<button onclick="showDrillCmd()" style="background:#e94560;color:#fff;border:none;padding:4px 12px;border-radius:3px;cursor:pointer">Generate Command</button>
+<code id="dd-cmd" style="color:#2ecc71;display:none;padding:4px 8px;background:#111;border-radius:3px;user-select:all;cursor:copy"></code>
+</div>
+<script>
+function showDrillCmd(){
+  var cam=document.getElementById('dd-cam').value;
+  var s=document.getElementById('dd-start').value;
+  var e=document.getElementById('dd-end').value;
+  if(!s||!e){alert('Enter start and end time');return}
+  var cmd='python drill_down.py --camera '+cam+' --date '+((typeof DP_CUR!=='undefined'&&DP_CUR)||document.querySelector('h1').textContent.trim())+' --start '+s+' --end '+e;
+  var el=document.getElementById('dd-cmd');
+  el.textContent=cmd;el.style.display='inline';
+  navigator.clipboard.writeText(cmd).then(function(){el.style.background='#1a4a1a'}).catch(function(){});
+}
+</script>
+<div class="cam-header">
+<div>Time</div>
+<div>CH04</div>
+<div>CH03</div>
+<div>CH05</div>
+<div>CH06</div>
+<div>CH01</div>
+<div>CH02</div>
+</div>
+<div class="grid-row empty hour-sep" id="hour-0">
+<div class="time-label hour">00:00</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:01</div>
+<div class="cell"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1eB_Rv0HSCT2ZAk3VlmQ9a8x24lHCIc_B=s320" data-hour="0" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1eB_Rv0HSCT2ZAk3VlmQ9a8x24lHCIc_B=s1600" data-id="2026-10-06 CH03 00:01:00 | 1006_0001_CH03_0p1v.jpg" data-dets="bicycle 28%" data-boxes='[{"c":"bicycle","p":28,"b":[0.6773,0.3417,0.8313,0.6299]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1C_Fbrqf3DJcjJV87gwQpG_Ag2808Kax3=s320" data-hour="0" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1C_Fbrqf3DJcjJV87gwQpG_Ag2808Kax3=s1600" data-id="2026-10-06 CH05 00:01:00 | 1006_0001_CH05_0p1v.jpg" data-dets="car 26%" data-boxes='[{"c":"car","p":26,"b":[0.2188,0.3319,0.3449,0.4986]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:02</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1_MTs2RvKSXnz5xYeb6u4zXHMDs8ssNrY=s320" data-hour="0" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1_MTs2RvKSXnz5xYeb6u4zXHMDs8ssNrY=s1600" data-id="2026-10-06 CH03 00:02:45 | 1006_0002_CH03_0p1v.jpg" data-dets="bicycle 30%" data-boxes='[{"c":"bicycle","p":30,"b":[0.6383,0.1812,0.8289,0.7403]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1f4NGB9ETVLuL5LjNxVdXdY-4NYU51nsn=s320" data-hour="0" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1f4NGB9ETVLuL5LjNxVdXdY-4NYU51nsn=s1600" data-id="2026-10-06 CH01 00:02:45 | 1006_0002_CH01_0p1v.jpg" data-dets="bicycle 26%" data-boxes='[{"c":"bicycle","p":26,"b":[0.3688,0.1465,0.5277,0.9729]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1P61kOLxtCL5X1ORGz3z43afxnKunDyVx=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1P61kOLxtCL5X1ORGz3z43afxnKunDyVx=s1600" data-id="2026-10-06 CH02 00:02:00 | 1006_0002_CH02_2p0v.jpg" data-dets="person 36%, person 33%" data-boxes='[{"c":"person","p":36,"b":[0.5992,0.3076,0.616,0.3653]},{"c":"person","p":33,"b":[0.5805,0.2743,0.5988,0.3625]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:03</div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1t0dzZ1wZaPjafyWIuVjT1xd9yWAPnRO2=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1t0dzZ1wZaPjafyWIuVjT1xd9yWAPnRO2=s1600" data-id="2026-10-06 CH04 00:03:00 | 1006_0003_CH04_1p0v.jpg" data-dets="person 26%" data-boxes='[{"c":"person","p":26,"b":[0.157,0.309,0.1711,0.3764]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1M3rxBENjxynQM1OpfhfUwZdJ4JcxjRyb=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1M3rxBENjxynQM1OpfhfUwZdJ4JcxjRyb=s1600" data-id="2026-10-06 CH05 00:03:00 | 1006_0003_CH05_1p0v.jpg" data-dets="person 29%" data-boxes='[{"c":"person","p":29,"b":[0.9191,0.4229,0.9996,0.9875]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1IJuAAKcRhA3YcsS5GhshB6tpe014DqtJ=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1IJuAAKcRhA3YcsS5GhshB6tpe014DqtJ=s1600" data-id="2026-10-06 CH02 00:03:45 | 1006_0003_CH02_2p0v.jpg" data-dets="person 33%, person 32%" data-boxes='[{"c":"person","p":33,"b":[0.6004,0.3063,0.616,0.3653]},{"c":"person","p":32,"b":[0.5801,0.2708,0.5988,0.3632]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:04</div>
+<div class="cell"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1HXK-_k9EkpK_eziF633F4xMsNTtz9Wqu=s320" data-hour="0" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1HXK-_k9EkpK_eziF633F4xMsNTtz9Wqu=s1600" data-id="2026-10-06 CH03 00:04:00 | 1006_0004_CH03_0p1v.jpg" data-dets="bicycle 34%" data-boxes='[{"c":"bicycle","p":34,"b":[0.6793,0.3382,0.8297,0.6278]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:05</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1Mzu7yr-Xl22SRJHi18YhYaJoaFpJJ-m-=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1Mzu7yr-Xl22SRJHi18YhYaJoaFpJJ-m-=s1600" data-id="2026-10-06 CH02 00:05:00 | 1006_0005_CH02_2p0v.jpg" data-dets="person 27%, person 26%" data-boxes='[{"c":"person","p":27,"b":[0.6008,0.3069,0.6164,0.3667]},{"c":"person","p":26,"b":[0.5816,0.2792,0.5988,0.3625]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:07</div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1XLDZARqfwjErDElPz0Ue2KPJQ5A1kWUW=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1XLDZARqfwjErDElPz0Ue2KPJQ5A1kWUW=s1600" data-id="2026-10-06 CH02 00:07:00 | 1006_0007_CH02_1p0v.jpg" data-dets="person 45%" data-boxes='[{"c":"person","p":45,"b":[0.1918,0.3646,0.2211,0.4736]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:08</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/14zBHzr1vFmRCQojCQbnvYzJrFvqQDfu7=s320" data-hour="0" class="both" data-full="https://img.proxyforanding.xyz/d/14zBHzr1vFmRCQojCQbnvYzJrFvqQDfu7=s1600" data-id="2026-10-06 CH03 00:08:00 | 1006_0008_CH03_1p2v.jpg" data-dets="person 28%, bicycle 27%, bicycle 27%" data-boxes='[{"c":"person","p":28,"b":[0.7266,0.0764,0.8133,0.5354]},{"c":"bicycle","p":27,"b":[0.6625,0.3299,0.8277,0.7528]},{"c":"bicycle","p":27,"b":[0.682,0.3333,0.8273,0.6375]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:09</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1sno34_HHxxMS7rLSIG6jWVDncN8PqO44=s320" data-hour="0" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1sno34_HHxxMS7rLSIG6jWVDncN8PqO44=s1600" data-id="2026-10-06 CH03 00:09:45 | 1006_0009_CH03_0p1v.jpg" data-dets="bicycle 30%" data-boxes='[{"c":"bicycle","p":30,"b":[0.6867,0.3438,0.8285,0.6174]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1-iBLGjF0vHN8IcX-qi4cv3E0ukaeITdC=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1-iBLGjF0vHN8IcX-qi4cv3E0ukaeITdC=s1600" data-id="2026-10-06 CH02 00:09:00 | 1006_0009_CH02_1p0v.jpg" data-dets="person 25%" data-boxes='[{"c":"person","p":25,"b":[0.5992,0.3076,0.616,0.3667]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:11</div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1jWRKNBscQsLynCrvmpzLahcvnDiTms-r=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1jWRKNBscQsLynCrvmpzLahcvnDiTms-r=s1600" data-id="2026-10-06 CH04 00:11:00 | 1006_0011_CH04_1p0v.jpg" data-dets="person 26%" data-boxes='[{"c":"person","p":26,"b":[0.1547,0.3063,0.1738,0.3958]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/18MqF9acsVc-nTn67cXnf7F8YO87886iA=s320" data-hour="0" class="vehicle" data-full="https://img.proxyforanding.xyz/d/18MqF9acsVc-nTn67cXnf7F8YO87886iA=s1600" data-id="2026-10-06 CH03 00:11:00 | 1006_0011_CH03_0p1v.jpg" data-dets="bicycle 29%" data-boxes='[{"c":"bicycle","p":29,"b":[0.6359,0.1458,0.8309,0.7562]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1O-vTfXqMzQog7nZCEa5J5aSlKhHJ_KCn=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1O-vTfXqMzQog7nZCEa5J5aSlKhHJ_KCn=s1600" data-id="2026-10-06 CH02 00:11:00 | 1006_0011_CH02_1p0v.jpg" data-dets="person 27%" data-boxes='[{"c":"person","p":27,"b":[0.5805,0.2639,0.5988,0.3618]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:12</div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1_XOkXXcrQ4jXV38DLQZ5u6_6t8hEYv-H=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1_XOkXXcrQ4jXV38DLQZ5u6_6t8hEYv-H=s1600" data-id="2026-10-06 CH04 00:12:45 | 1006_0012_CH04_1p0v.jpg" data-dets="person 25%" data-boxes='[{"c":"person","p":25,"b":[0.1348,0.2958,0.1531,0.3882]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1_B6wnHsyhq_n7DcZnBlOZFoZqYi-lS52=s320" data-hour="0" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1_B6wnHsyhq_n7DcZnBlOZFoZqYi-lS52=s1600" data-id="2026-10-06 CH03 00:12:45 | 1006_0012_CH03_0p1v.jpg" data-dets="bicycle 26%" data-boxes='[{"c":"bicycle","p":26,"b":[0.6555,0.341,0.8297,0.6556]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1r-z2vWvvFG0YVN2-auM-86RbK1xESgqd=s320" data-hour="0" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1r-z2vWvvFG0YVN2-auM-86RbK1xESgqd=s1600" data-id="2026-10-06 CH01 00:12:45 | 1006_0012_CH01_0p1v.jpg" data-dets="bicycle 26%" data-boxes='[{"c":"bicycle","p":26,"b":[0.3707,0.1389,0.5566,0.9625]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1CY83MF7u37gvW_zxmDX09IrSVphog0u7=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1CY83MF7u37gvW_zxmDX09IrSVphog0u7=s1600" data-id="2026-10-06 CH02 00:12:00 | 1006_0012_CH02_1p0v.jpg" data-dets="person 31%" data-boxes='[{"c":"person","p":31,"b":[0.877,0.25,0.9043,0.3451]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:13</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1cD_-eojwEHjXvho9CNj-pUsgYKJ9gpNg=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1cD_-eojwEHjXvho9CNj-pUsgYKJ9gpNg=s1600" data-id="2026-10-06 CH05 00:13:00 | 1006_0013_CH05_1p0v.jpg" data-dets="person 37%" data-boxes='[{"c":"person","p":37,"b":[0.9203,0.4104,1.0,0.9882]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1miOOymX4jCkBkWA-RbzB3RU4pqNyTRuq=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1miOOymX4jCkBkWA-RbzB3RU4pqNyTRuq=s1600" data-id="2026-10-06 CH02 00:13:00 | 1006_0013_CH02_1p0v.jpg" data-dets="person 26%" data-boxes='[{"c":"person","p":26,"b":[0.6004,0.3056,0.616,0.366]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:14</div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1ERbt3SXEjxaOqoN6xKB-vOIsLaOfcvlB=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1ERbt3SXEjxaOqoN6xKB-vOIsLaOfcvlB=s1600" data-id="2026-10-06 CH04 00:14:00 | 1006_0014_CH04_1p0v.jpg" data-dets="person 26%" data-boxes='[{"c":"person","p":26,"b":[0.1547,0.3104,0.1715,0.3937]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1RRd876VAbA2ugBerQ4kQ5EmqX_cLCF94=s320" data-hour="0" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1RRd876VAbA2ugBerQ4kQ5EmqX_cLCF94=s1600" data-id="2026-10-06 CH03 00:14:45 | 1006_0014_CH03_0p1v.jpg" data-dets="bicycle 26%" data-boxes='[{"c":"bicycle","p":26,"b":[0.6844,0.3514,0.8273,0.6146]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1JUT7op1Cn0R81fftUqH1DkYCQviQnHoS=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1JUT7op1Cn0R81fftUqH1DkYCQviQnHoS=s1600" data-id="2026-10-06 CH02 00:14:45 | 1006_0014_CH02_2p0v.jpg" data-dets="person 31%, person 25%" data-boxes='[{"c":"person","p":31,"b":[0.5809,0.2687,0.5988,0.3611]},{"c":"person","p":25,"b":[0.6008,0.3063,0.616,0.3632]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:15</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1A-dl8g8fZ49q_9e0jlQkwF2rPpXTuhEo=s320" data-hour="0" class="fp" data-full="https://img.proxyforanding.xyz/d/1A-dl8g8fZ49q_9e0jlQkwF2rPpXTuhEo=s1600" data-id="2026-10-06 CH03 00:15:45 | " data-dets="" data-boxes='[]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1M-xXZWpSerfxqICwSihaGJBXUm2CZDNQ=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1M-xXZWpSerfxqICwSihaGJBXUm2CZDNQ=s1600" data-id="2026-10-06 CH05 00:15:00 | 1006_0015_CH05_2p0v.jpg" data-dets="person 30%, person 29%" data-boxes='[{"c":"person","p":30,"b":[0.1984,0.209,0.2355,0.3861]},{"c":"person","p":29,"b":[0.9187,0.4319,1.0,0.9868]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:16</div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1j5eWEDTGvGFrcsKSFLZHaPYq4zKZxZeC=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1j5eWEDTGvGFrcsKSFLZHaPYq4zKZxZeC=s1600" data-id="2026-10-06 CH04 00:16:00 | 1006_0016_CH04_1p0v.jpg" data-dets="person 25%" data-boxes='[{"c":"person","p":25,"b":[0.1562,0.3083,0.1719,0.3868]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1SLkjxlbrQPR-fUlW7HMAnPSsSI5jGhYy=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1SLkjxlbrQPR-fUlW7HMAnPSsSI5jGhYy=s1600" data-id="2026-10-06 CH02 00:16:00 | 1006_0016_CH02_2p0v.jpg" data-dets="person 29%, person 28%" data-boxes='[{"c":"person","p":29,"b":[0.5797,0.2687,0.598,0.3625]},{"c":"person","p":28,"b":[0.5996,0.3063,0.6168,0.3625]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:17</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1f3v8bicwC4q0bRKaEQS76DS_dxVihgOY=s320" data-hour="0" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1f3v8bicwC4q0bRKaEQS76DS_dxVihgOY=s1600" data-id="2026-10-06 CH03 00:17:00 | 1006_0017_CH03_0p1v.jpg" data-dets="bicycle 26%" data-boxes='[{"c":"bicycle","p":26,"b":[0.6828,0.3312,0.8309,0.6236]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:18</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1Vnz4D1fH_WHPGDXaG9kksTSBbfnhSZAt=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1Vnz4D1fH_WHPGDXaG9kksTSBbfnhSZAt=s1600" data-id="2026-10-06 CH02 00:18:00 | 1006_0018_CH02_1p0v.jpg" data-dets="person 27%" data-boxes='[{"c":"person","p":27,"b":[0.5785,0.2701,0.5988,0.3625]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:19</div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1lQIhlmoaWX-0gvQGCMGMlIFxSmbiIpwZ=s320" data-hour="0" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1lQIhlmoaWX-0gvQGCMGMlIFxSmbiIpwZ=s1600" data-id="2026-10-06 CH05 00:19:00 | 1006_0019_CH05_0p1v.jpg" data-dets="truck 28%" data-boxes='[{"c":"truck","p":28,"b":[0.2148,0.2972,0.3441,0.4965]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1JClsAkknUnbeg0Y8sNrBJVNUggg-WEgH=s320" data-hour="0" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1JClsAkknUnbeg0Y8sNrBJVNUggg-WEgH=s1600" data-id="2026-10-06 CH06 00:19:00 | 1006_0019_CH06_0p1v.jpg" data-dets="car 28%" data-boxes='[{"c":"car","p":28,"b":[0.8354,0.1315,0.9797,0.2389]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:20</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1PdVb5VlDjznb77f5HIkAkuZNSUnc-YIU=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1PdVb5VlDjznb77f5HIkAkuZNSUnc-YIU=s1600" data-id="2026-10-06 CH03 00:20:45 | 1006_0020_CH03_1p0v.jpg" data-dets="person 25%" data-boxes='[{"c":"person","p":25,"b":[0.7234,0.0722,0.8309,0.55]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1Lz5SahOVP-kS-Si_RRwXkIVEQiyDMilJ=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1Lz5SahOVP-kS-Si_RRwXkIVEQiyDMilJ=s1600" data-id="2026-10-06 CH02 00:20:00 | 1006_0020_CH02_2p0v.jpg" data-dets="person 28%, person 25%" data-boxes='[{"c":"person","p":28,"b":[0.5809,0.2722,0.6,0.3632]},{"c":"person","p":25,"b":[0.6004,0.3063,0.6164,0.3667]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:23</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/14dqmGnASBb3J1sD4Ofn_AUe1sN3n2E6c=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/14dqmGnASBb3J1sD4Ofn_AUe1sN3n2E6c=s1600" data-id="2026-10-06 CH02 00:23:00 | 1006_0023_CH02_3p0v.jpg" data-dets="person 30%, person 29%, person 26%" data-boxes='[{"c":"person","p":30,"b":[0.5801,0.2757,0.5992,0.3604]},{"c":"person","p":29,"b":[0.6,0.3063,0.6168,0.3583]},{"c":"person","p":26,"b":[0.1922,0.3625,0.2227,0.4674]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:25</div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1xlPcrNnyxCdh-lD5DyIkSfR_PePrHeHi=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1xlPcrNnyxCdh-lD5DyIkSfR_PePrHeHi=s1600" data-id="2026-10-06 CH04 00:25:00 | 1006_0025_CH04_1p0v.jpg" data-dets="person 29%" data-boxes='[{"c":"person","p":29,"b":[0.1324,0.291,0.1531,0.3861]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1R_TARRa_kKhHiYAe66JD6CNzR0Ng3hVl=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1R_TARRa_kKhHiYAe66JD6CNzR0Ng3hVl=s1600" data-id="2026-10-06 CH02 00:25:00 | 1006_0025_CH02_1p0v.jpg" data-dets="person 33%" data-boxes='[{"c":"person","p":33,"b":[0.5984,0.3076,0.6184,0.3611]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:28</div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/14tfgA2WiNff64g6QbYMMXKiW8tzCRGko=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/14tfgA2WiNff64g6QbYMMXKiW8tzCRGko=s1600" data-id="2026-10-06 CH04 00:28:45 | 1006_0028_CH04_1p0v.jpg" data-dets="person 28%" data-boxes='[{"c":"person","p":28,"b":[0.2242,0.2903,0.2406,0.3896]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1m8ORe4WEFapmiip09eaht11h1WgKlQud=s320" data-hour="0" class="both" data-full="https://img.proxyforanding.xyz/d/1m8ORe4WEFapmiip09eaht11h1WgKlQud=s1600" data-id="2026-10-06 CH03 00:28:00 | 1006_0028_CH03_1p1v.jpg" data-dets="bicycle 30%, person 30%" data-boxes='[{"c":"bicycle","p":30,"b":[0.6438,0.3375,0.8293,0.6972]},{"c":"person","p":30,"b":[0.7273,0.1097,0.8098,0.5285]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:29</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1u4sLVfauwLN8xS4LllygnTvVMEPHqelk=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1u4sLVfauwLN8xS4LllygnTvVMEPHqelk=s1600" data-id="2026-10-06 CH02 00:29:00 | 1006_0029_CH02_1p0v.jpg" data-dets="person 26%" data-boxes='[{"c":"person","p":26,"b":[0.6,0.3076,0.6172,0.366]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:31</div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1YtJ_rhbK4CrMv9cjRnWvSWrxStZS-Zll=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1YtJ_rhbK4CrMv9cjRnWvSWrxStZS-Zll=s1600" data-id="2026-10-06 CH04 00:31:00 | 1006_0031_CH04_1p0v.jpg" data-dets="person 28%" data-boxes='[{"c":"person","p":28,"b":[0.1344,0.2944,0.1535,0.3854]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1Yzu0o2spT3CznopyEEAQdmwjsOLWDvj9=s320" data-hour="0" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1Yzu0o2spT3CznopyEEAQdmwjsOLWDvj9=s1600" data-id="2026-10-06 CH03 00:31:00 | 1006_0031_CH03_0p1v.jpg" data-dets="bicycle 31%" data-boxes='[{"c":"bicycle","p":31,"b":[0.6734,0.3222,0.8305,0.6576]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/16o4gQtrfpMKHu9Ij9T0KQlcO7brlEmgy=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/16o4gQtrfpMKHu9Ij9T0KQlcO7brlEmgy=s1600" data-id="2026-10-06 CH02 00:31:45 | 1006_0031_CH02_1p0v.jpg" data-dets="person 26%" data-boxes='[{"c":"person","p":26,"b":[0.7445,0.3472,0.7629,0.4354]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:32</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1BwRahPPuYU9hkT520bDxXxrqzXY_Rrp4=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1BwRahPPuYU9hkT520bDxXxrqzXY_Rrp4=s1600" data-id="2026-10-06 CH02 00:32:00 | 1006_0032_CH02_2p0v.jpg" data-dets="person 26%, person 26%" data-boxes='[{"c":"person","p":26,"b":[0.5801,0.2736,0.5988,0.3618]},{"c":"person","p":26,"b":[0.5996,0.3069,0.6172,0.3625]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:33</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1C90dniaPV0z55ayx7KQk8zTVGpBOsJMI=s320" data-hour="0" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1C90dniaPV0z55ayx7KQk8zTVGpBOsJMI=s1600" data-id="2026-10-06 CH03 00:33:45 | 1006_0033_CH03_0p1v.jpg" data-dets="bicycle 27%" data-boxes='[{"c":"bicycle","p":27,"b":[0.6344,0.2729,0.8293,0.7396]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:34</div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1tgajInLeTuLhUpmsoH3GwNLzJ0JlW6ok=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1tgajInLeTuLhUpmsoH3GwNLzJ0JlW6ok=s1600" data-id="2026-10-06 CH02 00:34:00 | 1006_0034_CH02_1p0v.jpg" data-dets="person 28%" data-boxes='[{"c":"person","p":28,"b":[0.877,0.2479,0.9043,0.3444]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:36</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/19WsMmEIBMSiRr1zE9c7JIldohzTpTKzL=s320" data-hour="0" class="vehicle" data-full="https://img.proxyforanding.xyz/d/19WsMmEIBMSiRr1zE9c7JIldohzTpTKzL=s1600" data-id="2026-10-06 CH03 00:36:00 | 1006_0036_CH03_0p1v.jpg" data-dets="bicycle 35%" data-boxes='[{"c":"bicycle","p":35,"b":[0.6367,0.1556,0.8297,0.7472]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1j5dOYBPFvtF-Z3NMp1UnFlvbh3UIHUPo=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1j5dOYBPFvtF-Z3NMp1UnFlvbh3UIHUPo=s1600" data-id="2026-10-06 CH02 00:36:00 | 1006_0036_CH02_2p0v.jpg" data-dets="person 35%, person 30%" data-boxes='[{"c":"person","p":35,"b":[0.5816,0.2708,0.5988,0.3618]},{"c":"person","p":30,"b":[0.7141,0.3507,0.7324,0.4181]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:37</div>
+<div class="cell"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1Cn_p3uQxAVGqJe6Jce4Xv7XG3wD1QD_5=s320" data-hour="0" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1Cn_p3uQxAVGqJe6Jce4Xv7XG3wD1QD_5=s1600" data-id="2026-10-06 CH03 00:37:45 | 1006_0037_CH03_0p1v.jpg" data-dets="bicycle 27%" data-boxes='[{"c":"bicycle","p":27,"b":[0.6711,0.3368,0.8305,0.6618]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1epphBDRkqmYH0FHk3cYpBQrFDnQzvQdG=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1epphBDRkqmYH0FHk3cYpBQrFDnQzvQdG=s1600" data-id="2026-10-06 CH02 00:37:00 | 1006_0037_CH02_1p0v.jpg" data-dets="person 26%" data-boxes='[{"c":"person","p":26,"b":[0.6,0.3083,0.6168,0.3611]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:39</div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1LN4tTTDfoG5-m6d-AeJFGqw0bZfY6lpI=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1LN4tTTDfoG5-m6d-AeJFGqw0bZfY6lpI=s1600" data-id="2026-10-06 CH04 00:39:00 | 1006_0039_CH04_1p0v.jpg" data-dets="person 32%" data-boxes='[{"c":"person","p":32,"b":[0.1523,0.3104,0.177,0.3986]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1NQ8vQ4pegzVXkARXl4e8mfKeaJtxtfLT=s320" data-hour="0" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1NQ8vQ4pegzVXkARXl4e8mfKeaJtxtfLT=s1600" data-id="2026-10-06 CH03 00:39:00 | 1006_0039_CH03_0p1v.jpg" data-dets="bicycle 26%" data-boxes='[{"c":"bicycle","p":26,"b":[0.6687,0.1569,0.8289,0.6743]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1A3xZebkQigeBF2SHiplbmwYa2V3545NC=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1A3xZebkQigeBF2SHiplbmwYa2V3545NC=s1600" data-id="2026-10-06 CH02 00:39:00 | 1006_0039_CH02_2p0v.jpg" data-dets="person 35%, person 27%" data-boxes='[{"c":"person","p":35,"b":[0.6859,0.3194,0.7027,0.3993]},{"c":"person","p":27,"b":[0.191,0.3639,0.2223,0.4583]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:40</div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1ynzszu2uOhZwI2cz8bMuQd8eYX_yfUvH=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1ynzszu2uOhZwI2cz8bMuQd8eYX_yfUvH=s1600" data-id="2026-10-06 CH02 00:40:00 | 1006_0040_CH02_1p0v.jpg" data-dets="person 28%" data-boxes='[{"c":"person","p":28,"b":[0.8742,0.2375,0.9055,0.3424]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:41</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1hn-qjbhI7du3HYibFtIF79EhQTBtSV_e=s320" data-hour="0" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1hn-qjbhI7du3HYibFtIF79EhQTBtSV_e=s1600" data-id="2026-10-06 CH03 00:41:45 | 1006_0041_CH03_0p1v.jpg" data-dets="bicycle 28%" data-boxes='[{"c":"bicycle","p":28,"b":[0.6746,0.3285,0.8281,0.6403]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/19UrGzfKitHB0bN1bsL53eCVasqwKpTRj=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/19UrGzfKitHB0bN1bsL53eCVasqwKpTRj=s1600" data-id="2026-10-06 CH05 00:41:00 | 1006_0041_CH05_1p0v.jpg" data-dets="person 41%" data-boxes='[{"c":"person","p":41,"b":[0.9191,0.4215,0.9996,0.9896]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:42</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1lQeqwKM1lol4L6w1_-kf-zLRTWmuPdjJ=s320" data-hour="0" class="fp" data-full="https://img.proxyforanding.xyz/d/1lQeqwKM1lol4L6w1_-kf-zLRTWmuPdjJ=s1600" data-id="2026-10-06 CH03 00:42:00 | " data-dets="" data-boxes='[]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1OdG5pkCr_fN5jYzeqDJDjyU4DyoND_iC=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1OdG5pkCr_fN5jYzeqDJDjyU4DyoND_iC=s1600" data-id="2026-10-06 CH02 00:42:00 | 1006_0042_CH02_1p0v.jpg" data-dets="person 27%" data-boxes='[{"c":"person","p":27,"b":[0.7164,0.3479,0.7297,0.4069]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:43</div>
+<div class="cell"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/13rz0jH5ftbxVIaaTEfVN_0P9lQ4ZwlER=s320" data-hour="0" class="vehicle" data-full="https://img.proxyforanding.xyz/d/13rz0jH5ftbxVIaaTEfVN_0P9lQ4ZwlER=s1600" data-id="2026-10-06 CH03 00:43:00 | 1006_0043_CH03_0p1v.jpg" data-dets="bicycle 28%" data-boxes='[{"c":"bicycle","p":28,"b":[0.6746,0.3403,0.8297,0.6389]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/181YKBiWrfXmrhU3EtAKBFbmK8KdCYs8C=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/181YKBiWrfXmrhU3EtAKBFbmK8KdCYs8C=s1600" data-id="2026-10-06 CH02 00:43:00 | 1006_0043_CH02_1p0v.jpg" data-dets="person 26%" data-boxes='[{"c":"person","p":26,"b":[0.5797,0.2611,0.5996,0.3604]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:45</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1a3lInHrauugibSfXvgKL4c0QPXaU-Yaj=s320" data-hour="0" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1a3lInHrauugibSfXvgKL4c0QPXaU-Yaj=s1600" data-id="2026-10-06 CH03 00:45:45 | 1006_0045_CH03_0p1v.jpg" data-dets="bicycle 27%" data-boxes='[{"c":"bicycle","p":27,"b":[0.6781,0.3368,0.8289,0.6181]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/10OVo5e31WD9f0OCNwQ2hW_xGmN3nbpVg=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/10OVo5e31WD9f0OCNwQ2hW_xGmN3nbpVg=s1600" data-id="2026-10-06 CH05 00:45:00 | 1006_0045_CH05_1p0v.jpg" data-dets="person 32%" data-boxes='[{"c":"person","p":32,"b":[0.9187,0.4285,1.0,0.9882]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1QIPfOf8-e2Cc06M6dlvqvw-I89FF0IOT=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1QIPfOf8-e2Cc06M6dlvqvw-I89FF0IOT=s1600" data-id="2026-10-06 CH02 00:45:00 | 1006_0045_CH02_1p0v.jpg" data-dets="person 30%" data-boxes='[{"c":"person","p":30,"b":[0.6,0.3042,0.6172,0.359]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:46</div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1Me9oPYMdedo3UVoADpUN_xjg6lUKQAUD=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1Me9oPYMdedo3UVoADpUN_xjg6lUKQAUD=s1600" data-id="2026-10-06 CH02 00:46:00 | 1006_0046_CH02_1p0v.jpg" data-dets="person 28%" data-boxes='[{"c":"person","p":28,"b":[0.8766,0.2444,0.9047,0.3451]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:47</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1gUGCWkAwh_1_1kleDJ5tIVFZEFnv44sG=s320" data-hour="0" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1gUGCWkAwh_1_1kleDJ5tIVFZEFnv44sG=s1600" data-id="2026-10-06 CH03 00:47:00 | 1006_0047_CH03_0p1v.jpg" data-dets="bicycle 39%" data-boxes='[{"c":"bicycle","p":39,"b":[0.6711,0.1514,0.8289,0.7375]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1ywXb1v5TnK-VgmVG_VGyAdIJr3UZ3FY0=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1ywXb1v5TnK-VgmVG_VGyAdIJr3UZ3FY0=s1600" data-id="2026-10-06 CH02 00:47:00 | 1006_0047_CH02_3p0v.jpg" data-dets="person 34%, person 33%, person 25%" data-boxes='[{"c":"person","p":34,"b":[0.7176,0.3493,0.7352,0.4028]},{"c":"person","p":33,"b":[0.5996,0.3069,0.6168,0.3639]},{"c":"person","p":25,"b":[0.5785,0.2722,0.5992,0.3618]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:50</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/12J1KZSfJVVa47pzp0cOZTtuc9EGe9Eh3=s320" data-hour="0" class="vehicle" data-full="https://img.proxyforanding.xyz/d/12J1KZSfJVVa47pzp0cOZTtuc9EGe9Eh3=s1600" data-id="2026-10-06 CH03 00:50:45 | 1006_0050_CH03_0p1v.jpg" data-dets="bicycle 26%" data-boxes='[{"c":"bicycle","p":26,"b":[0.6332,0.3444,0.8289,0.7472]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1lA6omTxaEHEpLdJjvLvyB2WHgdP8IvjD=s320" data-hour="0" class="both" data-full="https://img.proxyforanding.xyz/d/1lA6omTxaEHEpLdJjvLvyB2WHgdP8IvjD=s1600" data-id="2026-10-06 CH05 00:50:00 | 1006_0050_CH05_1p1v.jpg" data-dets="truck 31%, person 27%" data-boxes='[{"c":"truck","p":31,"b":[0.2168,0.2972,0.3445,0.4986]},{"c":"person","p":27,"b":[0.9191,0.4111,0.9996,0.9882]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:51</div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1ETKtIgbbp8EdBRAzx7FmEht2eeRnGpZv=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1ETKtIgbbp8EdBRAzx7FmEht2eeRnGpZv=s1600" data-id="2026-10-06 CH04 00:51:00 | 1006_0051_CH04_1p0v.jpg" data-dets="person 25%" data-boxes='[{"c":"person","p":25,"b":[0.1305,0.2931,0.1531,0.3875]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:52</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1p88wkiVUGrJq77H7eoiPp9C4VAN9NFNY=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1p88wkiVUGrJq77H7eoiPp9C4VAN9NFNY=s1600" data-id="2026-10-06 CH05 00:52:00 | 1006_0052_CH05_1p0v.jpg" data-dets="person 29%" data-boxes='[{"c":"person","p":29,"b":[0.2363,0.2285,0.2578,0.2931]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1AWxIh83FrEYODQdIzwM5AFycJlTsPWgK=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1AWxIh83FrEYODQdIzwM5AFycJlTsPWgK=s1600" data-id="2026-10-06 CH02 00:52:00 | 1006_0052_CH02_1p0v.jpg" data-dets="person 40%" data-boxes='[{"c":"person","p":40,"b":[0.5992,0.3076,0.616,0.3625]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:54</div>
+<div class="cell"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1gK9A4VPshhTlPgTS54A96CHx6srLvEee=s320" data-hour="0" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1gK9A4VPshhTlPgTS54A96CHx6srLvEee=s1600" data-id="2026-10-06 CH03 00:54:45 | 1006_0054_CH03_0p1v.jpg" data-dets="bicycle 25%" data-boxes='[{"c":"bicycle","p":25,"b":[0.6797,0.3208,0.8281,0.6201]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/18LaDSm0CDExNGdATmpc0PV6XhwMSk0Xh=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/18LaDSm0CDExNGdATmpc0PV6XhwMSk0Xh=s1600" data-id="2026-10-06 CH02 00:54:00 | 1006_0054_CH02_5p0v.jpg" data-dets="person 34%, person 33%, person 26%, person 26%, person 25%" data-boxes='[{"c":"person","p":34,"b":[0.6,0.3069,0.6164,0.3625]},{"c":"person","p":33,"b":[0.5797,0.2819,0.5992,0.3618]},{"c":"person","p":26,"b":[0.8793,0.2333,0.9051,0.3444]},{"c":"person","p":26,"b":[0.5703,0.2889,0.598,0.366]},{"c":"person","p":25,"b":[0.1914,0.3653,0.2223,0.4653]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:55</div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1lhPshCPXE7KdJ-4jfd8FYlE9y6bkGBM7=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1lhPshCPXE7KdJ-4jfd8FYlE9y6bkGBM7=s1600" data-id="2026-10-06 CH04 00:55:45 | 1006_0055_CH04_1p0v.jpg" data-dets="person 32%" data-boxes='[{"c":"person","p":32,"b":[0.2168,0.2965,0.2449,0.4382]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:57</div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1H8bKeNZrZcVpfeRSHzag1vRkD_O2EhH4=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1H8bKeNZrZcVpfeRSHzag1vRkD_O2EhH4=s1600" data-id="2026-10-06 CH04 00:57:00 | 1006_0057_CH04_2p0v.jpg" data-dets="person 29%, person 26%" data-boxes='[{"c":"person","p":29,"b":[0.1355,0.2944,0.1535,0.3889]},{"c":"person","p":26,"b":[0.1574,0.3083,0.1727,0.3951]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1kEzGu93qLWC813IknPriZS2gZXKAsHpV=s320" data-hour="0" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1kEzGu93qLWC813IknPriZS2gZXKAsHpV=s1600" data-id="2026-10-06 CH03 00:57:45 | 1006_0057_CH03_0p1v.jpg" data-dets="bicycle 30%" data-boxes='[{"c":"bicycle","p":30,"b":[0.668,0.159,0.8297,0.7292]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1x3gCb1Jv5W0NMCDZ3M1TNjlkyd996c2x=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1x3gCb1Jv5W0NMCDZ3M1TNjlkyd996c2x=s1600" data-id="2026-10-06 CH02 00:57:00 | 1006_0057_CH02_1p0v.jpg" data-dets="person 26%" data-boxes='[{"c":"person","p":26,"b":[0.6016,0.3083,0.6164,0.3653]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:58</div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1DzEXw9BYU0iTz8X98ZaeseZm7H8VxoYk=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1DzEXw9BYU0iTz8X98ZaeseZm7H8VxoYk=s1600" data-id="2026-10-06 CH02 00:58:45 | 1006_0058_CH02_1p0v.jpg" data-dets="person 30%" data-boxes='[{"c":"person","p":30,"b":[0.191,0.366,0.2223,0.4722]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">00:59</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1F9p9v4GO8COxdA-zn4JlwyvaYSz8VKnv=s320" data-hour="0" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1F9p9v4GO8COxdA-zn4JlwyvaYSz8VKnv=s1600" data-id="2026-10-06 CH03 00:59:45 | 1006_0059_CH03_0p1v.jpg" data-dets="bicycle 26%" data-boxes='[{"c":"bicycle","p":26,"b":[0.6676,0.3278,0.8289,0.6549]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1uwa82rMsw3hCTh28k10x5ZbhGceeIBZ6=s320" data-hour="0" class="person" data-full="https://img.proxyforanding.xyz/d/1uwa82rMsw3hCTh28k10x5ZbhGceeIBZ6=s1600" data-id="2026-10-06 CH05 00:59:00 | 1006_0059_CH05_1p0v.jpg" data-dets="person 28%" data-boxes='[{"c":"person","p":28,"b":[0.9203,0.409,1.0,0.9875]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row has-det hour-sep" id="hour-1">
+<div class="time-label hour">01:00</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/12CLsqf1PEL3rKT7fhsXBOA1sm3Ofth6j=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/12CLsqf1PEL3rKT7fhsXBOA1sm3Ofth6j=s1600" data-id="2026-10-06 CH02 01:00:00 | 1006_0100_CH02_2p0v.jpg" data-dets="person 31%, person 26%" data-boxes='[{"c":"person","p":31,"b":[0.582,0.2736,0.5992,0.3625]},{"c":"person","p":26,"b":[0.6016,0.3049,0.6172,0.3639]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:01</div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/16ZdsZTpdBth0uauYc4XVEUQw7Hdw1hRd=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/16ZdsZTpdBth0uauYc4XVEUQw7Hdw1hRd=s1600" data-id="2026-10-06 CH04 01:01:45 | 1006_0101_CH04_1p0v.jpg" data-dets="person 27%" data-boxes='[{"c":"person","p":27,"b":[0.1348,0.2944,0.1535,0.3882]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1aajtalSlPElbGVfE7f2ur9BHjqbA7jvW=s320" data-hour="1" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1aajtalSlPElbGVfE7f2ur9BHjqbA7jvW=s1600" data-id="2026-10-06 CH03 01:01:45 | 1006_0101_CH03_0p1v.jpg" data-dets="bicycle 30%" data-boxes='[{"c":"bicycle","p":30,"b":[0.632,0.3229,0.8289,0.7542]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:02</div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1jnlLTEKcGj5QOl36jOPk1DSALDfqVaOo=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1jnlLTEKcGj5QOl36jOPk1DSALDfqVaOo=s1600" data-id="2026-10-06 CH04 01:02:45 | 1006_0102_CH04_1p0v.jpg" data-dets="person 26%" data-boxes='[{"c":"person","p":26,"b":[0.2207,0.2958,0.2437,0.4396]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1zFhpkHoPWPbaSMrFFpG3e-Z50yjxetO0=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1zFhpkHoPWPbaSMrFFpG3e-Z50yjxetO0=s1600" data-id="2026-10-06 CH02 01:02:00 | 1006_0102_CH02_2p0v.jpg" data-dets="person 28%, person 28%" data-boxes='[{"c":"person","p":28,"b":[0.6004,0.3076,0.6164,0.3722]},{"c":"person","p":28,"b":[0.5805,0.275,0.5988,0.3632]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:03</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1sxBas_4sWOxcz7FW1ggmGS2uEXTjSxF-=s320" data-hour="1" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1sxBas_4sWOxcz7FW1ggmGS2uEXTjSxF-=s1600" data-id="2026-10-06 CH01 01:03:45 | 1006_0103_CH01_0p1v.jpg" data-dets="bicycle 26%" data-boxes='[{"c":"bicycle","p":26,"b":[0.3703,0.1417,0.5496,0.9722]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:04</div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1nnUG2ukvDiswVwxziWUD6_JQIcdcJ9Gm=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1nnUG2ukvDiswVwxziWUD6_JQIcdcJ9Gm=s1600" data-id="2026-10-06 CH04 01:04:00 | 1006_0104_CH04_1p0v.jpg" data-dets="person 37%" data-boxes='[{"c":"person","p":37,"b":[0.1367,0.2951,0.1543,0.3903]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1chb_AEg_fS3fNVcd0kl3axkX9aDPJjq0=s320" data-hour="1" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1chb_AEg_fS3fNVcd0kl3axkX9aDPJjq0=s1600" data-id="2026-10-06 CH03 01:04:00 | 1006_0104_CH03_0p1v.jpg" data-dets="bicycle 28%" data-boxes='[{"c":"bicycle","p":28,"b":[0.6711,0.1681,0.8297,0.709]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1kENKdDivvMgLq3VkZPnNw9GEMwqNFV8S=s320" data-hour="1" class="both" data-full="https://img.proxyforanding.xyz/d/1kENKdDivvMgLq3VkZPnNw9GEMwqNFV8S=s1600" data-id="2026-10-06 CH05 01:04:00 | 1006_0104_CH05_1p1v.jpg" data-dets="person 30%, truck 26%" data-boxes='[{"c":"person","p":30,"b":[0.9203,0.3875,1.0,0.9875]},{"c":"truck","p":26,"b":[0.2184,0.2993,0.3445,0.4972]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1Ksryx0Wp7fA302ff8opv8Q0VDSRuGl07=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1Ksryx0Wp7fA302ff8opv8Q0VDSRuGl07=s1600" data-id="2026-10-06 CH02 01:04:00 | 1006_0104_CH02_1p0v.jpg" data-dets="person 30%" data-boxes='[{"c":"person","p":30,"b":[0.5801,0.2722,0.5988,0.3632]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:05</div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1R8BgrRi3uSD5hNvLXoD48y3oX3cE8CmK=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1R8BgrRi3uSD5hNvLXoD48y3oX3cE8CmK=s1600" data-id="2026-10-06 CH04 01:05:45 | 1006_0105_CH04_1p0v.jpg" data-dets="person 35%" data-boxes='[{"c":"person","p":35,"b":[0.2168,0.2924,0.2445,0.4458]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1pSYYoAJ4P7svpavYuuv6fux7GQtLmtWJ=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1pSYYoAJ4P7svpavYuuv6fux7GQtLmtWJ=s1600" data-id="2026-10-06 CH02 01:05:00 | 1006_0105_CH02_1p0v.jpg" data-dets="person 26%" data-boxes='[{"c":"person","p":26,"b":[0.6012,0.3083,0.6156,0.3625]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:07</div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1RsiuanJvjWpwEgV0OPBhpEBhrJhIjP_F=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1RsiuanJvjWpwEgV0OPBhpEBhrJhIjP_F=s1600" data-id="2026-10-06 CH04 01:07:00 | 1006_0107_CH04_1p0v.jpg" data-dets="person 28%" data-boxes='[{"c":"person","p":28,"b":[0.2156,0.2965,0.2441,0.4319]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/18XFiA4M_CxROzVfH6CTfg3uKdYYvADk1=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/18XFiA4M_CxROzVfH6CTfg3uKdYYvADk1=s1600" data-id="2026-10-06 CH02 01:07:00 | 1006_0107_CH02_1p0v.jpg" data-dets="person 31%" data-boxes='[{"c":"person","p":31,"b":[0.6016,0.3076,0.6152,0.3653]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:08</div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1ewj-SX8fy1g3VH8yV_ZU377IJ_wk-Z4X=s320" data-hour="1" class="both" data-full="https://img.proxyforanding.xyz/d/1ewj-SX8fy1g3VH8yV_ZU377IJ_wk-Z4X=s1600" data-id="2026-10-06 CH05 01:08:00 | 1006_0108_CH05_1p1v.jpg" data-dets="person 30%, car 26%" data-boxes='[{"c":"person","p":30,"b":[0.2363,0.2292,0.2559,0.291]},{"c":"car","p":26,"b":[0.4113,0.3639,0.4512,0.4049]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:09</div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1IIKnHTxGdvewmTvq7W0UsI3K65RGuOqu=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1IIKnHTxGdvewmTvq7W0UsI3K65RGuOqu=s1600" data-id="2026-10-06 CH04 01:09:00 | 1006_0109_CH04_2p0v.jpg" data-dets="person 30%, person 29%" data-boxes='[{"c":"person","p":30,"b":[0.2172,0.2917,0.2457,0.4285]},{"c":"person","p":29,"b":[0.1328,0.2938,0.1527,0.3896]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1_dfVOXtyPXajp3O_oD1fNevjERthchxc=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1_dfVOXtyPXajp3O_oD1fNevjERthchxc=s1600" data-id="2026-10-06 CH02 01:09:45 | 1006_0109_CH02_1p0v.jpg" data-dets="person 29%" data-boxes='[{"c":"person","p":29,"b":[0.7164,0.3493,0.7297,0.3972]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:10</div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1hL20PuGA739Sua7tMejYl-lY7vjX6tJU=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1hL20PuGA739Sua7tMejYl-lY7vjX6tJU=s1600" data-id="2026-10-06 CH04 01:10:45 | 1006_0110_CH04_2p0v.jpg" data-dets="person 42%, person 29%" data-boxes='[{"c":"person","p":42,"b":[0.2152,0.2944,0.2457,0.4521]},{"c":"person","p":29,"b":[0.1355,0.2938,0.1535,0.3889]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1vFgfPorF-MJsicUpTdwsT-Vvu1l64gg9=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1vFgfPorF-MJsicUpTdwsT-Vvu1l64gg9=s1600" data-id="2026-10-06 CH02 01:10:00 | 1006_0110_CH02_1p0v.jpg" data-dets="person 28%" data-boxes='[{"c":"person","p":28,"b":[0.6,0.3076,0.6152,0.3639]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:11</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1Zs1hqBw3yibluZXay9PtHaCeR_BfANz2=s320" data-hour="1" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1Zs1hqBw3yibluZXay9PtHaCeR_BfANz2=s1600" data-id="2026-10-06 CH03 01:11:45 | 1006_0111_CH03_0p1v.jpg" data-dets="bicycle 28%" data-boxes='[{"c":"bicycle","p":28,"b":[0.673,0.1417,0.8297,0.6937]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:12</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1H92OVIJpIzUnqnqLqVLhiboqb7RI_nAF=s320" data-hour="1" class="fp" data-full="https://img.proxyforanding.xyz/d/1H92OVIJpIzUnqnqLqVLhiboqb7RI_nAF=s1600" data-id="2026-10-06 CH03 01:12:45 | " data-dets="" data-boxes='[]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1NmNnvX6GVhTvI4yx0PSEXNmHrT76nHkp=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1NmNnvX6GVhTvI4yx0PSEXNmHrT76nHkp=s1600" data-id="2026-10-06 CH02 01:12:00 | 1006_0112_CH02_1p0v.jpg" data-dets="person 31%" data-boxes='[{"c":"person","p":31,"b":[0.5996,0.3076,0.6156,0.3667]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:13</div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1p0Wz_bjqaqLx20QFdof4wGCRS1BbwMao=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1p0Wz_bjqaqLx20QFdof4wGCRS1BbwMao=s1600" data-id="2026-10-06 CH02 01:13:00 | 1006_0113_CH02_1p0v.jpg" data-dets="person 32%" data-boxes='[{"c":"person","p":32,"b":[0.191,0.3639,0.2273,0.4681]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:15</div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1PgLenFvY91_-k_MkBKJ3n-5PBhqDLJcH=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1PgLenFvY91_-k_MkBKJ3n-5PBhqDLJcH=s1600" data-id="2026-10-06 CH04 01:15:00 | 1006_0115_CH04_1p0v.jpg" data-dets="person 29%" data-boxes='[{"c":"person","p":29,"b":[0.2164,0.2938,0.2457,0.4319]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:16</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1Hlzl4gvpX_heOSQUl0cZQDWZoFsXEv9H=s320" data-hour="1" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1Hlzl4gvpX_heOSQUl0cZQDWZoFsXEv9H=s1600" data-id="2026-10-06 CH03 01:16:00 | 1006_0116_CH03_0p1v.jpg" data-dets="bicycle 38%" data-boxes='[{"c":"bicycle","p":38,"b":[0.6297,0.1507,0.8281,0.7521]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1p7hJ3H3ONC5Jq6tBZBMTRYZ1cZN2EpDP=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1p7hJ3H3ONC5Jq6tBZBMTRYZ1cZN2EpDP=s1600" data-id="2026-10-06 CH02 01:16:00 | 1006_0116_CH02_1p0v.jpg" data-dets="person 43%" data-boxes='[{"c":"person","p":43,"b":[0.1914,0.3653,0.2223,0.4729]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:18</div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1MKeWUaPfqF40RMiEr4A0ZDyzXmUuRmfA=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1MKeWUaPfqF40RMiEr4A0ZDyzXmUuRmfA=s1600" data-id="2026-10-06 CH04 01:18:45 | 1006_0118_CH04_1p0v.jpg" data-dets="person 28%" data-boxes='[{"c":"person","p":28,"b":[0.2168,0.2917,0.2445,0.4299]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1SkrSUtoHoQ38GphK6G0FfU2gvisQY0Hr=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1SkrSUtoHoQ38GphK6G0FfU2gvisQY0Hr=s1600" data-id="2026-10-06 CH02 01:18:00 | 1006_0118_CH02_1p0v.jpg" data-dets="person 26%" data-boxes='[{"c":"person","p":26,"b":[0.6008,0.3063,0.6148,0.3639]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:20</div>
+<div class="cell"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1G-ZW9zbdJPkILXXQyxqOeTIB3ckXbFqX=s320" data-hour="1" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1G-ZW9zbdJPkILXXQyxqOeTIB3ckXbFqX=s1600" data-id="2026-10-06 CH03 01:20:45 | 1006_0120_CH03_0p1v.jpg" data-dets="bicycle 29%" data-boxes='[{"c":"bicycle","p":29,"b":[0.6824,0.3271,0.825,0.6201]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1uRlHyO5NrmwDPcFJQ_OFxj1cpCk_Cyym=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1uRlHyO5NrmwDPcFJQ_OFxj1cpCk_Cyym=s1600" data-id="2026-10-06 CH02 01:20:00 | 1006_0120_CH02_1p0v.jpg" data-dets="person 45%" data-boxes='[{"c":"person","p":45,"b":[0.1914,0.3604,0.2219,0.4729]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:21</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1ADbfdEAcfDt1AoEqPVh3fG5suYTTrEKN=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1ADbfdEAcfDt1AoEqPVh3fG5suYTTrEKN=s1600" data-id="2026-10-06 CH05 01:21:00 | 1006_0121_CH05_1p0v.jpg" data-dets="person 32%" data-boxes='[{"c":"person","p":32,"b":[0.1926,0.2035,0.2383,0.3868]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1WzpNMQyAlLuiCLayT37jQfqlUlhuh48w=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1WzpNMQyAlLuiCLayT37jQfqlUlhuh48w=s1600" data-id="2026-10-06 CH02 01:21:00 | 1006_0121_CH02_1p0v.jpg" data-dets="person 35%" data-boxes='[{"c":"person","p":35,"b":[0.6008,0.3076,0.6156,0.366]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:22</div>
+<div class="cell"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1tf8oh14LteQV04_V94sQU8VbRzqzOuvN=s320" data-hour="1" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1tf8oh14LteQV04_V94sQU8VbRzqzOuvN=s1600" data-id="2026-10-06 CH03 01:22:00 | 1006_0122_CH03_0p1v.jpg" data-dets="bicycle 26%" data-boxes='[{"c":"bicycle","p":26,"b":[0.6727,0.3389,0.8305,0.6826]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:24</div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1IgZocrsaoq1X-P2v4o6PsEWeeroZPMnf=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1IgZocrsaoq1X-P2v4o6PsEWeeroZPMnf=s1600" data-id="2026-10-06 CH04 01:24:00 | 1006_0124_CH04_1p0v.jpg" data-dets="person 27%" data-boxes='[{"c":"person","p":27,"b":[0.1363,0.2979,0.1535,0.3861]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/12ObwCcG5ynTmFNzv4Z_WI0M52RACiRj1=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/12ObwCcG5ynTmFNzv4Z_WI0M52RACiRj1=s1600" data-id="2026-10-06 CH02 01:24:45 | 1006_0124_CH02_1p0v.jpg" data-dets="person 27%" data-boxes='[{"c":"person","p":27,"b":[0.6016,0.3097,0.6148,0.3653]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:26</div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1EX5C6qCF67Yi40ZMoj1j2iSh40-oNCXi=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1EX5C6qCF67Yi40ZMoj1j2iSh40-oNCXi=s1600" data-id="2026-10-06 CH04 01:26:00 | 1006_0126_CH04_2p0v.jpg" data-dets="person 28%, person 25%" data-boxes='[{"c":"person","p":28,"b":[0.2172,0.2951,0.2445,0.4014]},{"c":"person","p":25,"b":[0.1531,0.3076,0.1723,0.3944]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/13Yyes1qbLph8fV_OCkXf7w7zX9qwo7iO=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/13Yyes1qbLph8fV_OCkXf7w7zX9qwo7iO=s1600" data-id="2026-10-06 CH02 01:26:45 | 1006_0126_CH02_1p0v.jpg" data-dets="person 32%" data-boxes='[{"c":"person","p":32,"b":[0.6012,0.3069,0.6156,0.366]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:27</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1azCmty8w6X8qw5yAuDVLHE7NTUi-K_1G=s320" data-hour="1" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1azCmty8w6X8qw5yAuDVLHE7NTUi-K_1G=s1600" data-id="2026-10-06 CH03 01:27:00 | 1006_0127_CH03_0p1v.jpg" data-dets="bicycle 32%" data-boxes='[{"c":"bicycle","p":32,"b":[0.6305,0.3375,0.8313,0.7528]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:28</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1LuXIPlx0xJBU0i-4Mdy7mcSusZqb2cS-=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1LuXIPlx0xJBU0i-4Mdy7mcSusZqb2cS-=s1600" data-id="2026-10-06 CH02 01:28:00 | 1006_0128_CH02_1p0v.jpg" data-dets="person 28%" data-boxes='[{"c":"person","p":28,"b":[0.5992,0.3083,0.616,0.366]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:29</div>
+<div class="cell"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1f4uYMEhW4EHvM8pHgm4HKe4peKqNmz6x=s320" data-hour="1" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1f4uYMEhW4EHvM8pHgm4HKe4peKqNmz6x=s1600" data-id="2026-10-06 CH03 01:29:00 | 1006_0129_CH03_0p1v.jpg" data-dets="bicycle 27%" data-boxes='[{"c":"bicycle","p":27,"b":[0.6742,0.1653,0.8289,0.684]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:30</div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1ZNry8sy5iVVbQXvgNSXidyZjp8_tW9BP=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1ZNry8sy5iVVbQXvgNSXidyZjp8_tW9BP=s1600" data-id="2026-10-06 CH04 01:30:00 | 1006_0130_CH04_1p0v.jpg" data-dets="person 26%" data-boxes='[{"c":"person","p":26,"b":[0.2207,0.2979,0.2453,0.4319]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1Yf5jZsFnoSveDmvpo_sVRDmiO-Qk7vGS=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1Yf5jZsFnoSveDmvpo_sVRDmiO-Qk7vGS=s1600" data-id="2026-10-06 CH02 01:30:00 | 1006_0130_CH02_1p0v.jpg" data-dets="person 31%" data-boxes='[{"c":"person","p":31,"b":[0.5996,0.309,0.616,0.3646]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:31</div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1Q88cJn0FJe6kw1RrZncNtpWUi_LN-TAS=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1Q88cJn0FJe6kw1RrZncNtpWUi_LN-TAS=s1600" data-id="2026-10-06 CH02 01:31:00 | 1006_0131_CH02_2p0v.jpg" data-dets="person 29%, person 26%" data-boxes='[{"c":"person","p":29,"b":[0.5805,0.2722,0.5992,0.3604]},{"c":"person","p":26,"b":[0.7188,0.3458,0.7336,0.3979]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:33</div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1y1y3cziA6sSbsNe1g6DXbT4KC0lpDx0u=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1y1y3cziA6sSbsNe1g6DXbT4KC0lpDx0u=s1600" data-id="2026-10-06 CH04 01:33:00 | 1006_0133_CH04_1p0v.jpg" data-dets="person 28%" data-boxes='[{"c":"person","p":28,"b":[0.2168,0.2917,0.2445,0.3993]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1MqgsxeiIc-jdcf_O5MOPyol2ZNxH_mp7=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1MqgsxeiIc-jdcf_O5MOPyol2ZNxH_mp7=s1600" data-id="2026-10-06 CH02 01:33:00 | 1006_0133_CH02_1p0v.jpg" data-dets="person 25%" data-boxes='[{"c":"person","p":25,"b":[0.5797,0.275,0.5992,0.3625]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:35</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1i0rNbGFxQhg6uRiC9jrPNxz7aSg7jIXZ=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1i0rNbGFxQhg6uRiC9jrPNxz7aSg7jIXZ=s1600" data-id="2026-10-06 CH02 01:35:00 | 1006_0135_CH02_2p0v.jpg" data-dets="person 34%, person 30%" data-boxes='[{"c":"person","p":34,"b":[0.6004,0.3063,0.6168,0.3653]},{"c":"person","p":30,"b":[0.5793,0.2757,0.5984,0.3625]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:36</div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1PIA3oAUoN2P99E-bvmG83OcETKuXYNdV=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1PIA3oAUoN2P99E-bvmG83OcETKuXYNdV=s1600" data-id="2026-10-06 CH04 01:36:00 | 1006_0136_CH04_2p0v.jpg" data-dets="person 28%, person 25%" data-boxes='[{"c":"person","p":28,"b":[0.1363,0.2958,0.1539,0.3896]},{"c":"person","p":25,"b":[0.218,0.2944,0.2437,0.4215]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1JDPQqLWMfygP5vYPpzrHjdc8jn_DyHfx=s320" data-hour="1" class="fp" data-full="https://img.proxyforanding.xyz/d/1JDPQqLWMfygP5vYPpzrHjdc8jn_DyHfx=s1600" data-id="2026-10-06 CH02 01:36:45 | " data-dets="" data-boxes='[]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:38</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/11xM0iUe5cvK9AQ0AboyYRGiJfUb-_bLs=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/11xM0iUe5cvK9AQ0AboyYRGiJfUb-_bLs=s1600" data-id="2026-10-06 CH02 01:38:00 | 1006_0138_CH02_1p0v.jpg" data-dets="person 29%" data-boxes='[{"c":"person","p":29,"b":[0.5988,0.3076,0.6164,0.3646]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:39</div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1jr0TGNJLbzac1CdUjMEv3YhUwWzVTaim=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1jr0TGNJLbzac1CdUjMEv3YhUwWzVTaim=s1600" data-id="2026-10-06 CH04 01:39:45 | 1006_0139_CH04_1p0v.jpg" data-dets="person 26%" data-boxes='[{"c":"person","p":26,"b":[0.1355,0.2972,0.1531,0.391]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:42</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1PbH_YCQrp31iEdtakJ1Gr9j_Ri5p7uIz=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1PbH_YCQrp31iEdtakJ1Gr9j_Ri5p7uIz=s1600" data-id="2026-10-06 CH02 01:42:00 | 1006_0142_CH02_2p0v.jpg" data-dets="person 29%, person 29%" data-boxes='[{"c":"person","p":29,"b":[0.6004,0.3049,0.6168,0.3667]},{"c":"person","p":29,"b":[0.5797,0.2778,0.598,0.3639]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:44</div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1UbyE7r8G1AAl6YYOjG4Vq1LlVBkzO4L0=s320" data-hour="1" class="vehicle" data-full="https://img.proxyforanding.xyz/d/1UbyE7r8G1AAl6YYOjG4Vq1LlVBkzO4L0=s1600" data-id="2026-10-06 CH03 01:44:00 | 1006_0144_CH03_0p2v.jpg" data-dets="bicycle 39%, bicycle 27%" data-boxes='[{"c":"bicycle","p":39,"b":[0.682,0.3264,0.8281,0.6139]},{"c":"bicycle","p":27,"b":[0.6773,0.1701,0.8281,0.6514]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1y8vDyZdAwljFcN8U4MkjZ6vYnEwiwemt=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1y8vDyZdAwljFcN8U4MkjZ6vYnEwiwemt=s1600" data-id="2026-10-06 CH02 01:44:00 | 1006_0144_CH02_4p0v.jpg" data-dets="person 34%, person 29%, person 25%, person 25%" data-boxes='[{"c":"person","p":34,"b":[0.1914,0.3632,0.2227,0.4694]},{"c":"person","p":29,"b":[0.5992,0.3056,0.6176,0.3646]},{"c":"person","p":25,"b":[0.5793,0.2743,0.5996,0.3618]},{"c":"person","p":25,"b":[0.6707,0.3035,0.6977,0.4021]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:46</div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1jPVBwRpX_WGI-jPeMQ87SOrvKe5ROa1T=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1jPVBwRpX_WGI-jPeMQ87SOrvKe5ROa1T=s1600" data-id="2026-10-06 CH04 01:46:00 | 1006_0146_CH04_1p0v.jpg" data-dets="person 28%" data-boxes='[{"c":"person","p":28,"b":[0.0281,0.2632,0.0777,0.4]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1sM7DdG4MFFIfRDW0qXNhqSfQFoZSahm8=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1sM7DdG4MFFIfRDW0qXNhqSfQFoZSahm8=s1600" data-id="2026-10-06 CH02 01:46:45 | 1006_0146_CH02_1p0v.jpg" data-dets="person 26%" data-boxes='[{"c":"person","p":26,"b":[0.6,0.3104,0.6152,0.3639]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row has-det">
+<div class="time-label">01:47</div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/1MkuUMpnBA6oYFnmQu4QEs7v00MI-kQLa=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/1MkuUMpnBA6oYFnmQu4QEs7v00MI-kQLa=s1600" data-id="2026-10-06 CH04 01:47:00 | 1006_0147_CH04_1p0v.jpg" data-dets="person 25%" data-boxes='[{"c":"person","p":25,"b":[0.1328,0.2924,0.1535,0.3875]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><div class="dot fp"></div></div>
+<div class="cell"></div>
+<div class="cell"><img data-src="https://img.proxyforanding.xyz/d/15VwUXY7lwQz6zy0QAHggRpY12wQb3GvV=s320" data-hour="1" class="person" data-full="https://img.proxyforanding.xyz/d/15VwUXY7lwQz6zy0QAHggRpY12wQb3GvV=s1600" data-id="2026-10-06 CH02 01:47:45 | 1006_0147_CH02_1p0v.jpg" data-dets="person 29%" data-boxes='[{"c":"person","p":29,"b":[0.6711,0.3007,0.6977,0.3979]}]' onclick="openFull(this)" onerror="retryImg(this)"></div>
+</div>
+<div class="grid-row empty hour-sep" id="hour-2">
+<div class="time-label hour">02:00</div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row empty hour-sep" id="hour-3">
+<div class="time-label hour">03:00</div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row empty hour-sep" id="hour-4">
+<div class="time-label hour">04:00</div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row empty hour-sep" id="hour-5">
+<div class="time-label hour">05:00</div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row empty hour-sep" id="hour-6">
+<div class="time-label hour">06:00</div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row empty hour-sep" id="hour-7">
+<div class="time-label hour">07:00</div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row empty hour-sep" id="hour-8">
+<div class="time-label hour">08:00</div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row empty hour-sep" id="hour-9">
+<div class="time-label hour">09:00</div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row empty hour-sep" id="hour-10">
+<div class="time-label hour">10:00</div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row empty hour-sep" id="hour-11">
+<div class="time-label hour">11:00</div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row empty hour-sep" id="hour-12">
+<div class="time-label hour">12:00</div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row empty hour-sep" id="hour-13">
+<div class="time-label hour">13:00</div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row empty hour-sep" id="hour-14">
+<div class="time-label hour">14:00</div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row empty hour-sep" id="hour-15">
+<div class="time-label hour">15:00</div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row empty hour-sep" id="hour-16">
+<div class="time-label hour">16:00</div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row empty hour-sep" id="hour-17">
+<div class="time-label hour">17:00</div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row empty hour-sep" id="hour-18">
+<div class="time-label hour">18:00</div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row empty hour-sep" id="hour-19">
+<div class="time-label hour">19:00</div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row empty hour-sep" id="hour-20">
+<div class="time-label hour">20:00</div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row empty hour-sep" id="hour-21">
+<div class="time-label hour">21:00</div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row empty hour-sep" id="hour-22">
+<div class="time-label hour">22:00</div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+</div>
+<div class="grid-row empty hour-sep" id="hour-23">
+<div class="time-label hour">23:00</div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+<div class="cell"></div>
+</div>
+<div class="footer">2026-10-06 | 474 detections | 103 person | 139 thumbnails | Generated 2026-10-07 00:45</div>
+<div id="lightbox" onclick="closeLightbox()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:999;align-items:center;justify-content:center;flex-direction:column;cursor:zoom-out"><div id="lb-wrap" onclick="event.stopPropagation()" style="position:relative;display:inline-block;line-height:0"><img id="lightbox-img" style="max-width:94vw;max-height:74vh;border-radius:4px"></div><div id="lightbox-note" onclick="event.stopPropagation()" style="color:#ddd;font-size:13px;margin-top:8px;text-align:center;padding:0 12px;user-select:text"></div><div onclick="event.stopPropagation()" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;justify-content:center"><button onclick="copyId()" style="background:#0d47a1;color:#fff;border:0;border-radius:6px;padding:9px 16px;font-size:14px;cursor:pointer">複製編號</button><button onclick="verdict('ok')" style="background:#1b5e20;color:#fff;border:0;border-radius:6px;padding:9px 18px;font-size:14px;cursor:pointer">正確</button><button onclick="verdict('fp')" style="background:#7f1d1d;color:#fff;border:0;border-radius:6px;padding:9px 18px;font-size:14px;cursor:pointer">誤報</button><button onclick="verdict('dup')" style="background:#7a4a00;color:#fff;border:0;border-radius:6px;padding:9px 18px;font-size:14px;cursor:pointer">重複(多框)</button></div></div>
+<div style="position:fixed;right:14px;bottom:14px;z-index:500;display:flex;gap:8px;align-items:center;background:#16213e;border:1px solid #555;border-radius:8px;padding:7px 11px"><span style="font-size:13px;color:#9fb3c8">標記 <b id="lblcount">0</b></span><button onclick="exportLabels()" style="background:#0d47a1;color:#fff;border:0;border-radius:6px;padding:6px 12px;font-size:13px;cursor:pointer">匯出</button><button onclick="clearLabels()" style="background:#3a3a3a;color:#ccc;border:0;border-radius:6px;padding:6px 10px;font-size:13px;cursor:pointer">清除</button></div>
+<script>gmmCount();</script>
+</body></html>
