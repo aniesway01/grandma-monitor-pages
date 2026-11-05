@@ -11,8 +11,8 @@
 var GMM_SINK='https://labels.proxyforanding.xyz';  // click -> auto-saved to GitHub; '' to disable
 var GMM_LABELS=JSON.parse(localStorage.getItem('gmm_labels')||'[]');
 window._curImg=null;window._selBox=null;
-function vName(v){return v==='fp'?'誤報':v==='dup'?'重複(多框)':'正確';}
-function vColor(v){return v==='fp'?'#e74c3c':v==='dup'?'#ff9800':'#2ecc71';}
+function vName(v){return v==='fp'?'誤報':v==='dup'?'重複(多框)':v==='wrongcls'?'類別錯':'正確';}
+function vColor(v){return v==='fp'?'#e74c3c':v==='dup'?'#ff9800':v==='wrongcls'?'#8e44ad':'#2ecc71';}
 function gmmCount(){var e=document.getElementById('lblcount');if(e)e.textContent=GMM_LABELS.length;}
 function _exist(i){var m=GMM_LABELS.filter(function(x){return window._curImg&&x.id===window._curImg.id&&x.box===i;});return m.length?m[0].verdict:null;}
 function openFull(el){
